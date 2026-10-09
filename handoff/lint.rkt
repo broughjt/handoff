@@ -17,49 +17,57 @@
   (define diagnostics : (Listof diagnostic) null)
   (define (report! [path : Path] [message : String])
     (set! diagnostics (cons (diagnostic path message) diagnostics)))
-  (define (require-file! [path : Path])
-    (unless (file-exists? path)
-      (report! path "expected a regular file")))
   (define ((report-error [path : Path]) [error : exn])
     (report! path (exn-message error)))
 
+  ;; Each of the state files exists
   (for ([name (in-list state-files)])
-    (require-file! (build-path arc name)))
+    (define path (build-path arc name))
+    (unless (file-exists? path)
+      (report! path (format "expected an existent file" path))))
 
+  ;; The start.toml file exists, parses in the expected format, and each of the
+  ;; scoped path references point to files that exist
   (define start-path (build-path arc start-file))
-  (define project : (Promise Path) (delay (find-project-repository repository)))
+  (define project (find-project-repository repository))
   (define start*
     (with-handlers ([exn:fail:handoff? (report-error start-path)])
       (parse-start (read-toml start-path))))
   (when (start? start*)
-    (for ([reference (in-list (cons (start-workflow start*) (map read-first-path (start-read-first start*))))])
-      (with-handlers ([exn:fail:handoff? (report-error start-path)])
-        (define path (resolve-reference reference #:arc arc #:repository repository #:project project))
-        (unless (file-exists? path)
-          (report! start-path (format "~a: expected a regular file at ~a" (reference->string reference) path))))))
+    (for ([scope-path (in-list (cons (start-workflow start*) (map read-first-path (start-read-first start*))))])
+      (define path (resolve-scope-path scope-path #:arc arc #:repository repository #:project project))
+      (unless (file-exists? path)
+        (report! start-path (format "~a: expected a regular file at ~a" (scope-path->string scope-path) path)))))
 
+  ;; The checks.toml exists and parses in the expected format.
   (define checks-path (build-path arc checks-file))
   (with-handlers ([exn:fail:handoff? (report-error checks-path)])
     (parse-checks (read-toml checks-path)))
 
+  ;; - The log path either does not exist or is a directory
+  ;; - Every entry is a directory named a positive integer with no leading zeros, containing:
+  ;;   - A entry.md file
+  ;;   - A results.toml which parses in the expected format
   (define log (build-path arc log-directory))
   (cond
-    ;; A new arc does not have a log yet.
     [(not (or (file-exists? log) (directory-exists? log) (link-exists? log))) (void)]
     [(not (directory-exists? log)) (report! log "expected a directory")]
     [else
-     (define-values (entries misnamed) (list-log-entries arc))
+     (define-values (entries invalid) (list-log-entries arc))
      (for ([number (in-list entries)])
        (define entry (log-entry-path arc number))
        (cond
          [(not (directory-exists? entry)) (report! entry "expected a directory")]
          [else
-          (require-file! (build-path entry "entry.md"))
+          (define entry-path (build-path entry "entry.md"))
+          (unless (file-exists? entry-path)
+            (report! entry-path (format "expected an existent file" entry-path)))
           (define results-path (build-path entry "results.toml"))
           (with-handlers ([exn:fail:handoff? (report-error results-path)])
+            ;; TODO: We're not checking the format of the results.toml
             (read-toml results-path))]))
-     (for ([name (in-list misnamed)])
+     (for ([name (in-list invalid)])
        (report! (build-path log name)
-                "expected a log entry number: a positive integer without leading zeros"))])
+                "expected a log entry number, a positive integer without leading zeros"))])
 
   (reverse diagnostics))

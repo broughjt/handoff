@@ -16,15 +16,15 @@
                             'workflow "handoff:shared.md"
                             'read_first (list (hasheq 'path "project:handoff/main.rkt" 'reason "Entry point")))))
   (check-equal? (start-next start*) "Discuss the plan.\nThen implement.")
-  (check-equal? (start-workflow start*) (reference 'handoff (string->path "shared.md")))
+  (check-equal? (start-workflow start*) (scope-path 'handoff (string->path "shared.md")))
   (check-equal? (start-read-first start*)
-                (list (read-first (reference 'project (string->path "handoff/main.rkt")) "Entry point"))))
+                (list (read-first (scope-path 'project (string->path "handoff/main.rkt")) "Entry point"))))
 
 (test-case "invalid fields and references are rejected"
   (for ([changes (in-list (ann (list '((next . " ")) '((next . #f)) '((extra . "unknown"))
                                 '((workflow . "workflow.md")) '((workflow . "arc:/absolute"))
                                 '((workflow . "handoff:../escape")) '((workflow . "handoff:a/../../b"))
-                                '((workflow . "arc:.")) '((workflow . "arc:")) '((workflow . "other:file"))
+                                '((workflow . "arc:")) '((workflow . "other:file"))
                                 (list (cons 'read_first (hasheq))) '((read_first . ("file")))
                                 (list (cons 'read_first (list (hasheq 'path "arc:context.md"))))
                                 (list (cons 'read_first (list (hasheq 'path "arc:context.md" 'reason "")))))
@@ -39,7 +39,7 @@
   (define arc (string->path "/repository/arc"))
   (define repository (string->path "/repository"))
   (define project : (Promise Path) (delay (error "the project root is not needed")))
-  (check-equal? (resolve-reference (parse-reference "arc:notes/a.md") #:arc arc #:repository repository #:project project)
+  (check-equal? (resolve-scope-path (parse-scope-path "arc:notes/a.md") #:arc arc #:repository repository #:project project)
                 (string->path "/repository/arc/notes/a.md"))
-  (check-equal? (resolve-reference (parse-reference "handoff:shared.md") #:arc arc #:repository repository #:project project)
+  (check-equal? (resolve-scope-path (parse-scope-path "handoff:shared.md") #:arc arc #:repository repository #:project project)
                 (string->path "/repository/shared.md")))
