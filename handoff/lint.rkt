@@ -12,7 +12,6 @@
 
 (struct diagnostic ([path : Path] [message : String]) #:transparent)
 
-;; Never runs the arc's checks or writes anything.
 (: lint-arc (-> Path Path (Listof diagnostic)))
 (define (lint-arc arc repository)
   (define diagnostics : (Listof diagnostic) null)
