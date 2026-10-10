@@ -8,18 +8,20 @@
 
 (provide (all-defined-out))
 
-;; A fresh Git repository holding one empty directory, `arc`, deleted after
-;; `body` returns.
+;; A fresh handoff repository holding one empty directory, `arc`, inside a
+;; fresh project repository, both deleted after `body` returns.
 (: call-with-repository (All (A) (-> (-> Path A) A)))
 (define (call-with-repository body)
-  (define repository (make-temporary-file "handoff-test-~a" 'directory))
+  (define project (make-temporary-file "handoff-test-~a" 'directory))
   (dynamic-wind
    void
    (λ ()
+     (run-git project "init" "-q")
+     (define repository (build-path project repository-path))
+     (make-directory* (build-path repository "arc"))
      (run-git repository "init" "-q")
-     (make-directory (build-path repository "arc"))
      (body repository))
-   (λ () (delete-directory/files repository))))
+   (λ () (delete-directory/files project))))
 
 ;; Git in `directory`, failing the test when it exits non-zero.
 (: run-git (-> Path-String String * Void))

@@ -215,22 +215,20 @@ TOML
 
 (test-case "project references resolve against the enclosing repository"
   (call-with-arc
-   (λ ([project : Path] [_arc : Path])
-     (define repository (build-path project ".scratch" "handoff"))
-     (make-directory* repository)
-     (run-git repository "init" "-q")
-     (define arc (build-path repository "arc"))
-     (for ([name (in-list state-files)])
-       (write-file (build-path arc name) ""))
-     (write-file (build-path arc "checks.toml") "")
-     (write-file (build-path repository "shared.md") "")
+   (λ ([repository : Path] [arc : Path])
      (write-file (build-path arc "start.toml")
                  "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\n[[read_first]]\npath = \"project:source.rkt\"\nreason = \"Context\"\n")
      (check-equal? (length (lint-arc arc repository)) 1)
-     (write-file (build-path project "source.rkt") "")
+     (write-file (build-path repository 'up 'up "source.rkt") "")
      (check-equal? (lint-arc arc repository) '())
      ;; Found by walking up from inside the project.
      (check-equal? (outcome-code (handoff arc "lint")) 0))))
+
+(test-case "lint requires an enclosing project"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (delete-directory/files (build-path repository 'up 'up ".git"))
+     (check-equal? (outcome-code (handoff* repository "lint")) 2))))
 
 (test-case "a malformed start file is a lint error"
   (call-with-arc

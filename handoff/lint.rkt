@@ -1,7 +1,6 @@
 #lang typed/racket/base
 
-(require racket/promise
-         "checks.rkt"
+(require "checks.rkt"
          "error.rkt"
          "repository.rkt"
          "start.rkt"
@@ -24,7 +23,7 @@
   (for ([name (in-list state-files)])
     (define path (build-path arc name))
     (unless (file-exists? path)
-      (report! path (format "expected an existent file" path))))
+      (report! path "expected a regular file")))
 
   ;; The start.toml file exists, parses in the expected format, and each of the
   ;; scoped path references point to files that exist
@@ -61,7 +60,7 @@
          [else
           (define entry-path (build-path entry "entry.md"))
           (unless (file-exists? entry-path)
-            (report! entry-path (format "expected an existent file" entry-path)))
+            (report! entry-path "expected a regular file"))
           (define results-path (build-path entry "results.toml"))
           (with-handlers ([exn:fail:handoff? (report-error results-path)])
             ;; TODO: We're not checking the format of the results.toml

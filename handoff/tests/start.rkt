@@ -1,7 +1,6 @@
 #lang typed/racket/base
 
-(require racket/promise
-         typed/rackunit
+(require typed/rackunit
          "../error.rkt"
          "../start.rkt"
          "../toml.rkt")
@@ -38,7 +37,7 @@
 (test-case "references resolve against their scope"
   (define arc (string->path "/repository/arc"))
   (define repository (string->path "/repository"))
-  (define project : (Promise Path) (delay (error "the project root is not needed")))
+  (define project (string->path "/project"))
   (check-equal? (resolve-scope-path (parse-scope-path "arc:notes/a.md") #:arc arc #:repository repository #:project project)
                 (string->path "/repository/arc/notes/a.md"))
   (check-equal? (resolve-scope-path (parse-scope-path "handoff:shared.md") #:arc arc #:repository repository #:project project)

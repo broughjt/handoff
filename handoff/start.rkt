@@ -2,7 +2,6 @@
 
 (require racket/function
          racket/match
-         racket/promise
          racket/string
          racket/list
          "error.rkt"
