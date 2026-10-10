@@ -75,3 +75,19 @@
     (sleep 1.5)
     (check-equal? (file->string marker) "" ending)
     (delete-file marker)))
+
+(test-case "output past the capture limit keeps its end and counts the rest"
+  (define size (+ (* 3 capture-limit) 17))
+  (define result (run-shell (format "head -c ~a /dev/zero | tr '\\0' a; echo end" size)))
+  (check-equal? (result-outcome result) 'true)
+  (check-equal? (string-length (result-output result)) capture-limit)
+  (check-true (string-suffix? (result-output result) "aaaend\n"))
+  (check-equal? (result-truncated result) (- (+ size 4) capture-limit))
+  (check-equal? (result-truncated (run-shell "echo small")) 0))
+
+(test-case "a timeout keeps the count of dropped output"
+  (define size (* 3 capture-limit))
+  (define result (run-shell (format "head -c ~a /dev/zero | tr '\\0' a; sleep 30" size) #:timeout 2))
+  (check-equal? (result-outcome result) 'timeout)
+  (check-equal? (string-length (result-output result)) capture-limit)
+  (check-equal? (result-truncated result) (- size capture-limit)))

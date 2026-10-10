@@ -26,7 +26,9 @@
                  "[[check]]\nid = \"x\"\nclaim = \"example\"\nrun = \"touch SHOULD_NOT_EXIST\"\n")
      (body repository arc))))
 
-(define (write-log-entry [arc : Path] [name : String] #:results [results : String ""])
+(define minimal-results "[run]\nhost = \"h\"\nstarted = 2026-10-09T00:00:00Z\nduration = 0.0\n\n[project]\n")
+
+(define (write-log-entry [arc : Path] [name : String] #:results [results : String minimal-results])
   (define entry (build-path arc "log" name))
   (write-file (build-path entry "entry.md") "entry")
   (write-file (build-path entry "results.toml") results)

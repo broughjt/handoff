@@ -7,11 +7,13 @@
          racket/system
          "error.rkt")
 
-(provide git
+(provide (struct-out branch-head)
+         git
          repository-path
          find-handoff-repository
          git-repository?
          find-project-repository
+         project-branch-head
          list-arcs
          list-archived-arcs
          select-arc
@@ -64,6 +66,17 @@
     (or (git (build-path (normalize-path repository) 'up) "rev-parse" "--show-toplevel")
         (raise-handoff-error "no project repository encloses ~a" repository)))
   (string->path (string-trim output "\n" #:left? #f)))
+
+;; The branch head, consisting of the branch name (`#f` when detached) and its
+;; latest commit (`#f` before first commit).
+(struct branch-head ([branch : (U String #f)] [head : (U String #f)]) #:transparent)
+
+(: project-branch-head (-> Path branch-head))
+(define (project-branch-head project)
+  (define (line [output : (U String #f)])
+    (and output (string-trim output "\n" #:left? #f)))
+  (branch-head (line (git project "symbolic-ref" "--quiet" "--short" "HEAD"))
+               (line (git project "rev-parse" "--verify" "--quiet" "HEAD"))))
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs repository)

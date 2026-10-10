@@ -3,6 +3,7 @@
 (require "checks.rkt"
          "error.rkt"
          "repository.rkt"
+         "results.rkt"
          "start.rkt"
          "toml.rkt")
 
@@ -46,7 +47,7 @@
   ;; - The log path either does not exist or is a directory
   ;; - Every entry is a directory named a positive integer with no leading zeros, containing:
   ;;   - A entry.md file
-  ;;   - A results.toml which parses in the expected format
+  ;;   - A results.toml in the format results.rkt writes
   (define log (build-path arc log-directory))
   (cond
     [(not (or (file-exists? log) (directory-exists? log) (link-exists? log))) (void)]
@@ -63,8 +64,7 @@
             (report! entry-path "expected a regular file"))
           (define results-path (build-path entry "results.toml"))
           (with-handlers ([exn:fail:handoff? (report-error results-path)])
-            ;; TODO: We're not checking the format of the results.toml
-            (read-toml results-path))]))
+            (parse-results (read-toml results-path)))]))
      (for ([name (in-list invalid)])
        (report! (build-path log name)
                 "expected a log entry number, a positive integer without leading zeros"))])

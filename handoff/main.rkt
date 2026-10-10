@@ -156,6 +156,8 @@
           (printf "         exit ~a\n" (result-exit result)))
       (unless (string=? (result-output result) "")
         (printf "         output:\n")
+        (unless (zero? (result-truncated result))
+          (printf "           [~a bytes before this were not kept]\n" (result-truncated result)))
         (define lines (string-split (result-output result) "\n"))
         (for ([line (in-list (drop lines (max 0 (- (length lines) output-lines))))])
           (printf "           ~a\n" line)))))
