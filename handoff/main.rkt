@@ -9,7 +9,9 @@
          "error.rkt"
          "lint.rkt"
          "repository.rkt"
-         "toml.rkt")
+         "results.rkt"
+         "toml.rkt"
+         "update.rkt")
 
 (provide main Exit-Status)
 
@@ -34,10 +36,11 @@
 ;; true, a lint error), 2 for usage and input errors.
 (define-type Exit-Status (U 0 1 2))
 
-(define-type Command (U list-command check-command lint-command))
+(define-type Command (U list-command check-command lint-command update-command))
 (struct list-command ([archived? : Boolean]) #:transparent)
 (struct check-command ([arc : (U String #f)]) #:transparent)
 (struct lint-command ([arc : (U String #f)]) #:transparent)
+(struct update-command ([step : (U 'begin 'commit)] [arc : (U String #f)]) #:transparent)
 
 (struct invocation ([repository : (U Path #f)] [command : Command]) #:transparent)
 
@@ -52,6 +55,7 @@
    "  list   list handoff arcs"
    "  check  run the commands in checks.toml and report their results"
    "  lint   validate expected structure of a handoff arc"
+   "  update record a checkpoint: --begin records results, --commit commits the entry"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -78,7 +82,20 @@
       (list-command archived?))]
     [("check") (check-command (parse-arc-argument program arguments))]
     [("lint") (lint-command (parse-arc-argument program arguments))]
-    [else (raise-handoff-error "unknown command ~a; expected list, check or lint" command)]))
+    [("update")
+     (define step : (U 'begin 'commit #f) #f)
+     (command-line
+      #:program program
+      #:argv arguments
+      #:once-any
+      [("--begin") "Run the checks and record their results in a pending log entry"
+                   (set! step 'begin)]
+      [("--commit") "Commit the pending log entry once its entry.md is written"
+                    (set! step 'commit)]
+      #:args ([arc #f])
+      (update-command (or step (raise-handoff-error "update requires --begin or --commit"))
+                      (and arc (assert arc string?))))]
+    [else (raise-handoff-error "unknown command ~a; expected list, check, lint, or update" command)]))
 
 (: parse-arc-argument (-> String (Listof String) (U String #f)))
 (define (parse-arc-argument program arguments)
@@ -101,7 +118,12 @@
     [(check-command? command)
      (handle-check repository (select-arc repository (check-command-arc command)))]
     [(lint-command? command)
-     (handle-lint repository (select-arc repository (lint-command-arc command)))]))
+     (handle-lint repository (select-arc repository (lint-command-arc command)))]
+    [(update-command? command)
+     (define arc (select-arc repository (update-command-arc command)))
+     (case (update-command-step command)
+       [(begin) (handle-update-begin repository arc)]
+       [(commit) (handle-update-commit repository arc)])]))
 
 (: handle-list (-> Path Boolean Exit-Status))
 (define (handle-list repository archived?)
@@ -128,6 +150,28 @@
     (printf "~a: ~a\n" (diagnostic-path diagnostic) (diagnostic-message diagnostic)))
   (printf "~a: ~a lint errors\n" arc (length diagnostics))
   (if (empty? diagnostics) 0 1))
+
+(: handle-update-begin (-> Path String Exit-Status))
+(define (handle-update-begin repository arc)
+  (define pending* (begin-update repository arc))
+  (report (results-run (pending-results pending*)))
+  (printf "\nlog/~a results recorded. Write the entry to ~a, then run handoff update --commit ~a\n"
+          (pending-number pending*) (pending-entry pending*) arc)
+  0)
+
+(: handle-update-commit (-> Path String Exit-Status))
+(define (handle-update-commit repository arc)
+  (define checkpoint (commit-update repository arc))
+  (printf "log/~a committed as ~a ~a\n"
+          (checkpoint-number checkpoint)
+          (substring (checkpoint-commit checkpoint) 0 7)
+          (checkpoint-subject checkpoint))
+  (define dirty (checkpoint-dirty checkpoint))
+  (unless (empty? dirty)
+    (printf "not committed:\n")
+    (for ([line (in-list dirty)])
+      (printf "  ~a\n" line)))
+  0)
 
 ;; TODO: Move this when it becomes clear where to put it.
 (: report (-> run Void))

@@ -48,23 +48,27 @@
   ;; - Every entry is a directory named a positive integer with no leading zeros, containing:
   ;;   - A entry.md file
   ;;   - A results.toml in the format results.rkt writes
+  ;; - Except that a pending entry, an update in progress, may lack either file
   (define log (build-path arc log-directory))
   (cond
     [(not (or (file-exists? log) (directory-exists? log) (link-exists? log))) (void)]
     [(not (directory-exists? log)) (report! log "expected a directory")]
     [else
      (define-values (entries invalid) (list-log-entries arc))
+     (define pending (pending-log-entry arc))
      (for ([number (in-list entries)])
        (define entry (log-entry-path arc number))
+       (define pending? (eqv? number pending))
        (cond
          [(not (directory-exists? entry)) (report! entry "expected a directory")]
          [else
-          (define entry-path (build-path entry "entry.md"))
-          (unless (file-exists? entry-path)
+          (define entry-path (build-path entry entry-file))
+          (unless (or pending? (file-exists? entry-path))
             (report! entry-path "expected a regular file"))
-          (define results-path (build-path entry "results.toml"))
-          (with-handlers ([exn:fail:handoff? (report-error results-path)])
-            (parse-results (read-toml results-path)))]))
+          (define results-path (build-path entry results-file))
+          (unless (and pending? (not (file-exists? results-path)))
+            (with-handlers ([exn:fail:handoff? (report-error results-path)])
+              (parse-results (read-toml results-path))))]))
      (for ([name (in-list invalid)])
        (report! (build-path log name)
                 "expected a log entry number, a positive integer without leading zeros"))])

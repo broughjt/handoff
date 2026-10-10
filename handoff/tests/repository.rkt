@@ -9,8 +9,7 @@
    (λ ([repository : Path])
      (check-true (git-repository? repository))
      (check-false (git-repository? (build-path repository "arc")))
-     (run-git repository "-c" "user.name=Test" "-c" "user.email=test@example.com" "-c" "commit.gpgSign=false"
-              "commit" "--allow-empty" "-qm" "Initialize")
+     (run-git repository "commit" "--allow-empty" "-qm" "Initialize")
      (define worktree (build-path repository "linked"))
      (run-git repository "worktree" "add" "-q" "--detach" (path->string worktree))
      (check-true (file-exists? (build-path worktree ".git")))
@@ -22,8 +21,7 @@
      (define unborn (project-branch-head repository))
      (check-false (branch-head-head unborn))
      (check-true (string? (branch-head-branch unborn)))
-     (run-git repository "-c" "user.name=Test" "-c" "user.email=test@example.com" "-c" "commit.gpgSign=false"
-              "commit" "--allow-empty" "-qm" "Initialize")
+     (run-git repository "commit" "--allow-empty" "-qm" "Initialize")
      (run-git repository "checkout" "-q" "-b" "work")
      (define on-branch (project-branch-head repository))
      (check-regexp-match #px"^[0-9a-f]{40}$" (assert (branch-head-head on-branch)))

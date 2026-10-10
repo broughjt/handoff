@@ -2,13 +2,13 @@
 
 (require racket/list
          racket/path
-         racket/port
          racket/string
          racket/system
          "error.rkt")
 
 (provide (struct-out branch-head)
          git
+         git!
          repository-path
          find-handoff-repository
          git-repository?
@@ -21,10 +21,13 @@
          checks-file
          state-files
          log-directory
+         entry-file
+         results-file
          arc?
          parse-log-entry-name
          log-entry-path
-         list-log-entries)
+         list-log-entries
+         pending-log-entry)
 
 (define repository-path (build-path ".scratch" "handoff"))
 (define archive-tag-prefix "archive/")
@@ -34,6 +37,8 @@
 (define checks-file "checks.toml")
 (define state-files '("arc.md" "tasks.md" "do-not-reopen.md" "open-questions.md" "review.md"))
 (define log-directory "log")
+(define entry-file "entry.md")
+(define results-file "results.toml")
 
 ;; Whether `path` is the top level of a Git repository or worktree, rather
 ;; than a directory inside one.
@@ -114,14 +119,35 @@
 ;; empty and stderr is discarded.
 (: git (-> Path-String String * (U String #f)))
 (define (git directory . arguments)
+  (define-values (succeeded? output _error) (apply run-git directory arguments))
+  (and succeeded? output))
+
+;; TODO: no, exclamation points are only to indicate mutation
+;; Probably just do primed or starred name
+
+;; Like `git`, but raises a handoff error carrying Git's stderr when it exits
+;; non-zero, for commands whose failure the user has to see.
+(: git! (-> Path-String String * String))
+(define (git! directory . arguments)
+  (define-values (succeeded? output error) (apply run-git directory arguments))
+  (unless succeeded?
+    (raise-handoff-error "git ~a failed in ~a~a"
+                         (string-join arguments) directory
+                         (if (string=? error "") "" (string-append ":\n" (string-trim error)))))
+  output)
+
+(: run-git (-> Path-String String * (Values Boolean String String)))
+(define (run-git directory . arguments)
   (define program
     (or (find-executable-path "git") (raise-handoff-error "git not found on PATH")))
   (define output (open-output-string))
-  (and (parameterize ([current-input-port (open-input-string "")]
-                      [current-output-port output]
-                      [current-error-port (open-output-nowhere)])
-         (apply system* program "-C" directory arguments))
-       (get-output-string output)))
+  (define error (open-output-string))
+  (define succeeded?
+    (parameterize ([current-input-port (open-input-string "")]
+                   [current-output-port output]
+                   [current-error-port error])
+      (apply system* program "-C" directory arguments)))
+  (values succeeded? (get-output-string output) (get-output-string error)))
 
 ;; Arcs are the top-level directories holding a start file.
 (: arc? (-> Path Boolean))
@@ -150,3 +176,16 @@
   (define-values (numbered invalid) (partition parse-log-entry-name names))
   (values (sort (map (λ ([name : String]) (assert (parse-log-entry-name name))) numbered) <)
           (sort invalid string<?)))
+
+;; The number of the arc's update in progress: its highest-numbered log entry,
+;; when that is a directory not yet in the handoff repository's HEAD.
+(: pending-log-entry (-> Path (U Exact-Positive-Integer #f)))
+(define (pending-log-entry arc)
+  (define-values (numbers _invalid) (list-log-entries arc))
+  (and (pair? numbers)
+       (let* ([number (last numbers)]
+              [entry (log-entry-path arc number)])
+         (and (directory-exists? entry)
+              ;; `HEAD:./` names the tree at the current directory.
+              (not (git entry "cat-file" "-e" "HEAD:./"))
+              number))))

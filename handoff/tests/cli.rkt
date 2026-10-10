@@ -8,24 +8,6 @@
          "common.rkt"
          "../lint.rkt")
 
-(define start-text "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\nread_first = []\n")
-(define state-files '("arc.md" "tasks.md" "do-not-reopen.md" "open-questions.md" "review.md"))
-
-;; A repository whose `arc` passes lint. Its one check must never run during
-;; lint.
-(: call-with-arc (All (A) (-> (-> Path Path A) A)))
-(define (call-with-arc body)
-  (call-with-repository
-   (λ ([repository : Path])
-     (define arc (build-path repository "arc"))
-     (for ([name (in-list state-files)])
-       (write-file (build-path arc name) ""))
-     (write-file (build-path arc "start.toml") start-text)
-     (write-file (build-path repository "shared.md") "workflow")
-     (write-file (build-path arc "checks.toml")
-                 "[[check]]\nid = \"x\"\nclaim = \"example\"\nrun = \"touch SHOULD_NOT_EXIST\"\n")
-     (body repository arc))))
-
 (define minimal-results "[run]\nhost = \"h\"\nstarted = 2026-10-09T00:00:00Z\nduration = 0.0\n\n[project]\n")
 
 (define (write-log-entry [arc : Path] [name : String] #:results [results : String minimal-results])
@@ -34,11 +16,11 @@
   (write-file (build-path entry "results.toml") results)
   entry)
 
-(define (lines [text : String]) (string-split text "\n"))
+(define (commit-all [repository : Path])
+  (run-git repository "add" "--all")
+  (run-git repository "commit" "-qm" "Commit"))
 
-;; Run from the repository, naming it explicitly.
-(define (handoff* [repository : Path] . [arguments : String *])
-  (apply handoff repository "--repository" (path->string repository) arguments))
+(define (lines [text : String]) (string-split text "\n"))
 
 ;;; check
 
@@ -169,20 +151,41 @@ TOML
      (delete-file (build-path arc "arc.md"))
      (make-directory (build-path arc "arc.md"))
      (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nrun = \"true\"\n")
-     (delete-file (build-path (write-log-entry arc "1" #:results "[broken") "entry.md"))
+     (define entry (write-log-entry arc "1" #:results "[broken"))
+     (commit-all repository)
+     (delete-file (build-path entry "entry.md"))
      (define result (handoff* repository "lint" "arc"))
      (check-equal? (outcome-code result) 1)
      (for ([text (in-list '("start.toml" "arc.md" "checks.toml" "entry.md" "results.toml" "5 lint errors"))])
        (check-true (string-contains? (outcome-stdout result) text) text)))))
 
-(test-case "an incomplete latest log entry is reported"
+(test-case "an incomplete committed latest log entry is reported"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
      (write-log-entry arc "1")
      (define latest (write-log-entry arc "2"))
+     (commit-all repository)
      (delete-file (build-path latest "results.toml"))
      (check-equal? (map diagnostic-path (lint-arc arc repository))
                    (list (build-path latest "results.toml"))))))
+
+(test-case "only the pending entry, the latest and uncommitted, may lack its files"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (write-log-entry arc "1")
+     (commit-all repository)
+     (define pending (build-path arc "log" "2"))
+     (make-directory* pending)
+     (check-equal? (lint-arc arc repository) null)
+     (write-file (build-path pending "results.toml") minimal-results)
+     (check-equal? (lint-arc arc repository) null)
+     (write-file (build-path pending "results.toml") "[broken")
+     (check-equal? (map diagnostic-path (lint-arc arc repository))
+                   (list (build-path pending "results.toml")))
+     (write-file (build-path pending "results.toml") minimal-results)
+     (write-log-entry arc "3")
+     (check-equal? (map diagnostic-path (lint-arc arc repository))
+                   (list (build-path pending "entry.md"))))))
 
 (test-case "log entry names are canonical and reported in numeric order"
   (call-with-arc
@@ -251,9 +254,8 @@ TOML
    (λ ([repository : Path] [arc : Path])
      (write-file (build-path repository "notes" "readme.md") "")
      (check-equal? (outcome-stdout (handoff* repository "list")) "arc\n")
-     (run-git repository "-c" "user.name=Test" "-c" "user.email=test@example.com" "-c" "commit.gpgSign=false"
-              "commit" "--allow-empty" "-qm" "Initialize")
-     (run-git repository "-c" "tag.gpgSign=false" "tag" "archive/old")
+     (run-git repository "commit" "--allow-empty" "-qm" "Initialize")
+     (run-git repository "tag" "archive/old")
      (check-equal? (outcome-stdout (handoff* repository "list" "--archived")) "old\n"))))
 
 (test-case "usage errors exit 2"
