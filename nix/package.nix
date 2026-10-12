@@ -76,7 +76,9 @@ stdenvNoCC.mkDerivation {
   installCheckPhase = ''
     runHook preInstallCheck
     export HOME=$TMPDIR
-    repository=$TMPDIR/repository
+    # Like the tests, the handoff repository sits inside a project repository.
+    git init -q $TMPDIR/project
+    repository=$TMPDIR/project/.scratch/handoff
     mkdir -p $repository/arc
     git init -q $repository
     touch $repository/arc/start.toml

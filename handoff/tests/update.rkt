@@ -1,17 +1,14 @@
 #lang typed/racket/base
-;; The checkpoint command.
+;; Recording a log entry with update --begin and --commit.
 
 (require racket/file
          racket/list
          racket/string
          typed/rackunit
          "common.rkt"
-         (rename-in "../checks.rkt" [check make-check])
-         "../error.rkt"
-         "../repository.rkt"
-         "../results.rkt"
-         "../toml.rkt"
-         "../update.rkt")
+         (rename-in "../model.rkt" [check make-check])
+         "../main.rkt"
+         "../toml.rkt")
 
 (define entry "# Measured the thing\n\nIt was 3.\n")
 
@@ -29,20 +26,7 @@ TOML
   )
 
 (define (committed-paths [repository : Path])
-  (sort (string-split (assert (git repository "show" "--name-only" "--format=" "HEAD") string?) "\n") string<?))
-
-;;; The headline
-
-(test-case "the headline is the text of the opening heading"
-  (for ([text+headline (in-list '(("# Title\n\nBody" . "Title")
-                                  ("\n  \n## Title ##\n" . "Title")
-                                  ("   ###### Deep\tspace  " . "Deep\tspace")
-                                  ("# C# and F#\n" . "C# and F#")
-                                  ("# Title\r\n\r\nBody" . "Title")))])
-    (check-equal? (entry-headline (car text+headline)) (cdr text+headline) (car text+headline)))
-  (for ([text (in-list '("" "  \n\t\n" "Body\n# Later heading" "#Title" "# " "# ##"
-                         "    # Indented code" "####### Seven" "Title\n=====\n"))])
-    (check-exn exn:fail:handoff? (λ () (entry-headline text)) text)))
+  (sort (string-split (git repository "show" "--name-only" "--format=" "HEAD") "\n") string<?))
 
 ;;; Beginning and committing
 
@@ -53,7 +37,7 @@ TOML
   (apply handoff* repository "update" "--commit" arguments))
 
 (define (head-subject [repository : Path])
-  (git repository "log" "-1" "--format=%s"))
+  (git* repository "log" "-1" "--format=%s"))
 
 (test-case "begin records results in a pending entry, and commit commits it with the arc"
   (call-with-arc
@@ -78,11 +62,11 @@ TOML
                   (format "\nlog/1 results recorded. Write the entry to ~a, then run handoff update --commit arc\n"
                           (build-path entry-path "entry.md")))
                  (outcome-stdout begun))
-     (define recorded (parse-results (read-toml (build-path entry-path "results.toml"))))
-     (check-equal? (map (λ ([r : result]) (cons (check-id (result-check r)) (result-outcome r)))
-                        (run-results (results-run recorded)))
+     (define recorded (parse-check-run (read-toml (build-path entry-path "results.toml"))))
+     (check-equal? (map (λ ([r : check-result]) (cons (check-id (check-result-check r)) (check-result-outcome r)))
+                        (check-run-results recorded))
                    '(("yes" . true) ("no" . false)))
-     (check-equal? (results-project recorded) (project-branch-head (build-path repository 'up 'up)))
+     (check-equal? (check-run-project-head recorded) (project-branch-head (build-path repository 'up 'up)))
      (check-equal? (directory-list entry-path) (list (string->path "results.toml")))
      (check-equal? (head-subject repository) "Initialize\n")
 
@@ -109,8 +93,8 @@ TOML
      (check-equal? (sort (map path->string (directory-list entry-path)) string<?)
                    '("entry.md" "results.toml"))
      (check-equal? (file->string (build-path entry-path "entry.md")) entry)
-     (define recorded (parse-results (read-toml (build-path entry-path "results.toml"))))
-     (check-equal? (map (λ ([r : result]) (check-id (result-check r))) (run-results (results-run recorded)))
+     (define recorded (parse-check-run (read-toml (build-path entry-path "results.toml"))))
+     (check-equal? (map (λ ([r : check-result]) (check-id (check-result-check r))) (check-run-results recorded))
                    '("fixed"))
      (check-equal? (directory-list (build-path arc "log")) (list (string->path "1")))
      (check-equal? (outcome-code (commit-update* repository)) 0))))
@@ -170,7 +154,7 @@ TOML
      (write-file entry-path "")
      (check-refused repository "empty" "update" "--commit")
      (write-file entry-path "No heading\n")
-     (check-refused repository "heading" "update" "--commit")
+     (check-refused repository "headline" "update" "--commit")
      (write-file entry-path entry)
      (delete-file (build-path arc "review.md"))
      (check-refused repository "review.md" "update" "--commit")

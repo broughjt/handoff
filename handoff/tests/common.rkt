@@ -4,7 +4,7 @@
 (require racket/file
          racket/port
          "../main.rkt"
-         "../repository.rkt")
+         "../model.rkt")
 
 (provide (all-defined-out))
 
@@ -55,8 +55,7 @@
 ;; Git in `directory`, failing the test when it exits non-zero.
 (: run-git (-> Path-String String * Void))
 (define (run-git directory . arguments)
-  (unless (apply git directory arguments)
-    (error 'git "failed in ~a: ~a" directory arguments)))
+  (void (apply git directory arguments)))
 
 (: write-file (-> Path String Void))
 (define (write-file path text)
@@ -65,7 +64,7 @@
     (λ ([port : Output-Port]) (write-string text port)))
   (void))
 
-(struct outcome ([code : Exit-Status] [stdout : String] [stderr : String]) #:transparent)
+(struct outcome ([code : Exit-Code] [stdout : String] [stderr : String]) #:transparent)
 
 ;; Run the command line in-process from `directory`.
 (: handoff (->* (Path-String) (#:stdin String) #:rest String outcome))

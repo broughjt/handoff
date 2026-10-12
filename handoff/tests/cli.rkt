@@ -6,7 +6,7 @@
          racket/string
          typed/rackunit
          "common.rkt"
-         "../lint.rkt")
+         "../main.rkt")
 
 (define minimal-results "[run]\nhost = \"h\"\nstarted = 2026-10-09T00:00:00Z\nduration = 0.0\n\n[project]\n")
 

@@ -1,0 +1,328 @@
+#lang typed/racket/base
+;; The handoff repository's files as data: its layout, start.toml, checks.toml,
+;; results.toml and log entries. Parsing and writing only; nothing here runs a
+;; process or calls Git.
+
+(require racket/function
+         racket/list
+         racket/match
+         racket/math
+         racket/string
+         "error.rkt"
+         "toml.rkt")
+
+(require/typed gregor
+  [#:opaque Moment moment?]
+  [->posix (-> Moment Real)]
+  [posix->moment (-> Real Integer Moment)]
+  [moment->iso8601 (-> Moment String)])
+
+(provide repository-path
+         archive-tag-prefix
+         start-file
+         checks-file
+         state-files
+         log-directory
+         entry-file
+         results-file
+         parse-log-entry-name
+         log-entry-path
+         entry-headline
+         (struct-out start)
+         (struct-out scope-path)
+         (struct-out read-first)
+         Scope
+         parse-start
+         parse-scope-path
+         scope-path->string
+         resolve-scope-path
+         (struct-out check)
+         (struct-out check-result)
+         (struct-out branch-head)
+         (struct-out check-run)
+         Outcome
+         default-timeout
+         parse-checks
+         parse-check-result
+         parse-check-run
+         check-run->toml
+         describe-branch-head)
+
+;;; Layout
+
+(define repository-path (build-path ".scratch" "handoff"))
+(define archive-tag-prefix "archive/")
+
+;; The expected layout of a handoff arc directory
+(define start-file "start.toml")
+(define checks-file "checks.toml")
+(define state-files (list "arc.md" "tasks.md" "do-not-reopen.md" "open-questions.md" "review.md"))
+(define log-directory "log")
+(define entry-file "entry.md")
+(define results-file "results.toml")
+
+;; TODO: Do the next three functions belong under the "Layout" section?
+
+;; Ah, a typical canonicity problem of string representations of data
+;; types: "1" and "01" both represent 1. To avoid this, we require the
+;; absence of leading zeros.
+(: parse-log-entry-name (-> String (U Exact-Positive-Integer #f)))
+(define (parse-log-entry-name name)
+  (and (regexp-match? #px"^[1-9][0-9]*$" name)
+       (let ([number (string->number name)])
+         (and (exact-positive-integer? number) number))))
+
+(: log-entry-path (-> Path Exact-Positive-Integer Path))
+(define (log-entry-path arc number)
+  (build-path arc log-directory (number->string number)))
+
+;; Parse the text of a log entry's opening markdown heading, which must occur on
+;; its first nonblank line.
+(: entry-headline (-> String String))
+(define (entry-headline entry)
+  (define lines (filter (compose non-empty-string? string-trim)
+                        (string-split entry "\n")))
+  (when (empty? lines)
+    (raise-handoff-error "the entry is empty"))
+  (define heading (regexp-match #px"^ {0,3}#{1,6}[ \t]+(.*)$" (first lines)))
+  (define headline
+    (and heading
+         ;; Drop an optional closing sequence of hastags.
+         (string-trim (regexp-replace #px"(^|[ \t]+)#+[ \t]*$" (string-trim (assert (second heading))) ""))))
+  (unless (and headline (non-empty-string? headline))
+    (raise-handoff-error "the entry must open with a headline"))
+  headline)
+
+;;; start.toml
+
+(struct start
+  ([next : String]
+   [workflow : scope-path]
+   [read-first : (Listof read-first)])
+  #:transparent)
+(struct scope-path ([scope : Scope] [path : Path]) #:transparent)
+(define-type Scope (U 'arc 'handoff 'project))
+(struct read-first ([path : scope-path] [reason : String]) #:transparent)
+
+(: parse-start (-> Table start))
+(define (parse-start table)
+  (expect-fields table (list 'next 'workflow 'read_first) null "start")
+  (define reads (hash-ref table 'read_first))
+  (unless (list? reads)
+    (raise-handoff-error "read_first must be an array of tables"))
+  (start (expect-non-empty-string table 'next "start")
+         (parse-scope-path (expect-non-empty-string table 'workflow "start"))
+         (for/list ([entry (in-list reads)] [index (in-naturals)])
+           (define context (format "read_first[~a]" index))
+           (define read (expect-table entry context))
+           (expect-fields read (list 'path 'reason) null context)
+           (read-first (parse-scope-path (expect-non-empty-string read 'path context))
+                       (expect-non-empty-string read 'reason context)))))
+
+(: parse-scope-path (-> String scope-path))
+(define (parse-scope-path text)
+  (define fail
+    (thunk
+     (raise-handoff-error "~s: expected arc:, handoff:, or project: followed by a relative file path without '..'" text)))
+  (match (regexp-match #rx"^([^:]*):(.*)$" text)
+    [(list _ (? string? scope-name) (? string? relative))
+     (define scope : Scope
+       (match scope-name
+         ["arc" 'arc]
+         ["handoff" 'handoff]
+         ["project" 'project]
+         [_ (fail)]))
+     (when (or (string=? relative "") (regexp-match? #rx"\0" relative))
+       (fail))
+     (define path (string->path relative))
+     (unless (and (relative-path? path) (not (memq 'up (explode-path path))))
+       (fail))
+     (scope-path scope path)]
+    [_ (fail)]))
+
+(: scope-path->string (-> scope-path String))
+(define (scope-path->string scope-path)
+  (format "~a:~a" (scope-path-scope scope-path) (path->string (scope-path-path scope-path))))
+
+(: resolve-scope-path (-> scope-path #:arc Path #:repository Path #:project Path Path))
+(define (resolve-scope-path scope-path #:arc arc #:repository repository #:project project)
+  (build-path (case (scope-path-scope scope-path)
+                [(arc) arc]
+                [(handoff) repository]
+                [(project) project])
+              (scope-path-path scope-path)))
+
+;;; checks.toml and results.toml
+
+(define default-timeout : Positive-Real 60)
+
+(struct check ([id : String]
+               [claim : String]
+               [command : String]
+               [timeout : Positive-Real])
+  #:transparent)
+
+;; Exit 0 is `true`, exit 1 is `false`, a timeout is `timeout`, and any other
+;; exit code is `unknown`.
+(define-type Outcome (U 'true 'false 'unknown 'timeout))
+(define-predicate outcome? Outcome)
+
+;; The `exit` field is `#f` when the outcome is a timeout, the `duration` field
+;; measures seconds, and the `truncated` field counts the bytes dropped from the
+;; start of `output` if it went over the capture limit.
+(struct check-result ([check : check]
+                      [outcome : Outcome]
+                      [duration : Nonnegative-Real]
+                      [output : String]
+                      [truncated : Natural]
+                      [exit : (U Integer #f)])
+  #:transparent)
+
+;; The results and associated metadata of running each of the checks in a
+;; checks.toml. This is recorded to the results.toml file of log entry as a part
+;; of the handoff update process.
+;;
+;; `started` and the durations come from different clocks. `started` is
+;; wall-clock time in whole seconds since the epoch: it says when, and seconds
+;; match the resolution of Git's commit times. Durations come from the monotonic
+;; clock, which does not jump when the system clock is adjusted but has no fixed
+;; origin, so it can only say how long.
+(struct check-run ([host : String]
+                   [started : Integer]
+                   [duration : Nonnegative-Real]
+                   [project-head : branch-head]
+                   [results : (Listof check-result)])
+  #:transparent)
+
+;; The branch head, consisting of the branch name (`#f` when detached) and its
+;; latest commit (`#f` before first commit).
+(struct branch-head ([branch : (U String #f)] [head : (U String #f)]) #:transparent)
+
+;; Checks are an array of tables so that they run in file order.
+(: parse-checks (-> Table (Listof check)))
+(define (parse-checks table)
+  (expect-fields table null (list 'check) "checks")
+  (parse-check-entries table null null (λ ([_table : Table] [_context : String] [check : check]) check)))
+
+(: parse-check-result (-> Table String check check-result))
+(define (parse-check-result table context check)
+  (define outcome (let ([value (hash-ref table 'outcome)])
+                    (and (string? value) (string->symbol value))))
+  (unless (outcome? outcome)
+    (raise-handoff-error "~a: outcome must be true, false, unknown or timeout" context))
+  (define exit (hash-ref table 'exit #f))
+  (unless (or (exact-integer? exit) (not exit))
+    (raise-handoff-error "~a: exit must be an integer" context))
+  (unless (eq? (eq? outcome 'timeout) (not exit))
+    (raise-handoff-error "~a: exit must be present exactly when the outcome is not timeout" context))
+  (define output (hash-ref table 'output))
+  (unless (string? output)
+    (raise-handoff-error "~a: output must be a string" context))
+  (define truncated (hash-ref table 'truncated (const 0)))
+  (unless (exact-nonnegative-integer? truncated)
+    (raise-handoff-error "~a: truncated must be a nonnegative integer" context))
+  (check-result check
+                outcome
+                (expect-nonnegative-real table 'duration context)
+                output
+                truncated
+                exit))
+
+(: parse-check-run (-> Table check-run))
+(define (parse-check-run table)
+  (expect-fields table (list 'run 'project) (list 'check) "results")
+  (define run-table (expect-table (hash-ref table 'run) "run"))
+  (expect-fields run-table (list 'host 'started 'duration) null "run")
+  (define project-table (expect-table (hash-ref table 'project) "project"))
+  (expect-fields project-table null (list 'head 'branch) "project")
+  (define started (hash-ref run-table 'started))
+  (check-run
+   (expect-non-empty-string run-table 'host "run")
+   (if (moment? started)
+       (exact-floor (->posix started))
+       (raise-handoff-error "started must be a datetime with an offset"))
+   (expect-nonnegative-real run-table 'duration "run")
+   (branch-head
+    (and (hash-has-key? project-table 'branch)
+         (expect-non-empty-string project-table 'branch "project"))
+    (and (hash-has-key? project-table 'head)
+         (expect-non-empty-string project-table 'head "project")))
+   (parse-check-entries table
+                        (list 'outcome 'duration 'output)
+                        (list 'exit 'truncated)
+                        parse-check-result)))
+
+;; The `check` array of tables in `table`, in file order. Each entry is a check
+;; definition plus the `required` and `optional` fields that `parse` reads.
+(: parse-check-entries
+   (All (A) (-> Table (Listof Symbol) (Listof Symbol) (-> Table String check A) (Listof A))))
+(define (parse-check-entries table required optional parse)
+  (define entries (hash-ref table 'check (const null)))
+  (unless (list? entries)
+    (raise-handoff-error "check must be an array of tables"))
+  (define-values (checks parsed)
+    (for/lists ([checks : (Listof check)] [parsed : (Listof A)])
+               ([entry (in-list entries)] [index : Natural (in-naturals)])
+      (define table (expect-table entry (format "check[~a]" index)))
+      (define id (hash-ref table 'id #f))
+      (define context (if (string? id)
+                          (format "check ~a" id)
+                          (format "check[~a]" index)))
+      (expect-fields table (list* 'id 'claim 'run required) (cons 'timeout optional) context)
+      (define timeout (hash-ref table 'timeout (const default-timeout)))
+      (define check*
+        (check (expect-non-empty-string table 'id context)
+               (expect-non-empty-string table 'claim context)
+               (expect-non-empty-string table 'run context)
+               (if (and (real? timeout) (positive? timeout) (not (infinite? timeout)))
+                   timeout
+                   (raise-handoff-error "~a: timeout must be a positive number of seconds" context))))
+      (values check* (parse table context check*))))
+  (define duplicate (check-duplicates (map check-id checks)))
+  (when duplicate
+    (raise-handoff-error "check ~a appears more than once" duplicate))
+  parsed)
+
+(: check-run->toml (-> check-run String))
+(define (check-run->toml run)
+  (define out (open-output-string))
+  (define (field [key : String] [value : String])
+    (fprintf out "~a = ~a\n" key value))
+  (define project (check-run-project-head run))
+  (fprintf out "[run]\n")
+  (field "host" (toml-string (check-run-host run)))
+  (field "started" (moment->iso8601 (posix->moment (check-run-started run) 0)))
+  (field "duration" (toml-float (check-run-duration run) 3))
+  (fprintf out "\n[project]\n")
+  (let ([head (branch-head-head project)])
+    (when head
+      (field "head" (toml-string head))))
+  (let ([branch (branch-head-branch project)])
+    (when branch
+      (field "branch" (toml-string branch))))
+  (for ([result (in-list (check-run-results run))])
+    (define check (check-result-check result))
+    (define timeout (check-timeout check))
+    (define exit (check-result-exit result))
+    (fprintf out "\n[[check]]\n")
+    (field "id" (toml-string (check-id check)))
+    (field "claim" (toml-string (check-claim check)))
+    (field "run" (toml-string (check-command check)))
+    (field "timeout" (number->string (if (exact-integer? timeout)
+                                         timeout
+                                         (exact->inexact timeout))))
+    (field "outcome" (toml-string (symbol->string (check-result-outcome result))))
+    (when exit (field "exit" (number->string exit)))
+    (field "duration" (toml-float (check-result-duration result) 3))
+    (unless (zero? (check-result-truncated result))
+      (field "truncated" (number->string (check-result-truncated result))))
+    ;; Last, since it is usually the only multiline value.
+    (field "output" (toml-string (check-result-output result))))
+  (get-output-string out))
+
+(: describe-branch-head (-> branch-head String))
+(define (describe-branch-head branch-head*)
+  (define head (branch-head-head branch-head*))
+  (format "~a at ~a"
+          (or (branch-head-branch branch-head*) "a detached HEAD")
+          (if head (substring head 0 (min 12 (string-length head))) "no commit")))
