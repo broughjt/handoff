@@ -1,5 +1,6 @@
 #lang typed/racket/base
-;; Creating arcs with new, and listing, installing and forking workflows.
+;; Creating arcs with new, listing, installing and forking workflows, and
+;; finding the guide.
 
 (require racket/file
          racket/list
@@ -215,3 +216,30 @@
        (define result (apply handoff* repository "workflow" "fork" arguments))
        (check-equal? (outcome-code result) 2 (format "~a" arguments))
        (check-equal? (snapshot repository) before)))))
+
+;;; guide
+
+(test-case "guide prints the first HANDOFF.md under XDG_DATA_DIRS, outside any repository"
+  (define base (make-temporary-file "handoff-test-~a" 'directory))
+  (define-values (first second third)
+    (values (build-path base "first") (build-path base "second") (build-path base "third")))
+  (write-file (build-path second "handoff" "HANDOFF.md") "second")
+  (write-file (build-path third "handoff" "HANDOFF.md") "third")
+  ;; Relative entries are ignored, even when they hold a match.
+  (write-file (build-path base "relative" "handoff" "HANDOFF.md") "relative")
+  (define (guide [data-dirs : String])
+    (define environment (environment-variables-copy (current-environment-variables)))
+    (environment-variables-set! environment #"XDG_DATA_DIRS" (string->bytes/utf-8 data-dirs))
+    (parameterize ([current-environment-variables environment])
+      (handoff base "guide")))
+  (define found (guide (string-join (list "relative" (path->string first) (path->string second)
+                                          (path->string third))
+                                    ":")))
+  (check-equal? (outcome-code found) 0 (outcome-stderr found))
+  (check-equal? (outcome-stdout found) (format "~a\n" (build-path second "handoff" "HANDOFF.md")))
+  (define missing (guide (string-append "relative:" (path->string first))))
+  (check-equal? (outcome-code missing) 2)
+  (check-equal? (outcome-stdout missing) "")
+  (check-true (string-contains? (outcome-stderr missing) (path->string first)) (outcome-stderr missing))
+  (check-equal? (outcome-code (handoff base "guide" "extra")) 2)
+  (delete-directory/files base))

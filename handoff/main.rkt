@@ -65,7 +65,8 @@
 
 (define-type Subcommand
   (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand
-     new-subcommand workflow-list-subcommand workflow-install-subcommand workflow-fork-subcommand))
+     new-subcommand workflow-list-subcommand workflow-install-subcommand workflow-fork-subcommand
+     guide-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
 (struct new-subcommand ([arc : String] [workflow : (U String #f)]) #:transparent)
 (struct workflow-list-subcommand () #:transparent)
@@ -75,6 +76,7 @@
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
 (struct update-subcommand ([step : (U 'begin 'commit)] [arc : (U String #f)]) #:transparent)
+(struct guide-subcommand () #:transparent)
 
 ;; "Envisioning the hereafter, listenin' to Steve Wonder"
 (struct invocation ([repository : (U Path #f)] [subcommand : Subcommand]) #:transparent)
@@ -94,6 +96,7 @@
    "  update record a log entry: --begin runs the checks and records them, --commit commits"
    "  new    create an arc's files, copying its workflow pattern"
    "  workflow list|install|fork  list workflow patterns, copy one, or fork an arc's workflow"
+   "  guide  print the path of HANDOFF.md, which documents concepts shared by the handoff skills"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -161,7 +164,8 @@
       #:args (verb . verb-arguments)
       (parse-workflow-subcommand (assert verb string?)
                                  (map (λ (a) (assert a string?)) verb-arguments)))]
-    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, or workflow"
+    [("guide") (command-line #:program program #:argv arguments #:args () (guide-subcommand))]
+    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
                                subcommand)]))
 
 (: parse-workflow-subcommand (-> String (Listof String) Subcommand))
@@ -183,10 +187,12 @@
 (: execute (-> invocation Status))
 (define (execute invocation)
   (define subcommand (invocation-subcommand invocation))
-  (if (workflow-list-subcommand? subcommand)
-      ;; Listing user-scope patterns should not execute from the project repository.
-      (handle-workflow-list)
-      (execute-in-repository invocation)))
+  ;; Commands reading only user-scope or installed files should not execute
+  ;; from the project repository.
+  (cond
+    [(workflow-list-subcommand? subcommand) (handle-workflow-list)]
+    [(guide-subcommand? subcommand) (handle-guide)]
+    [else (execute-in-repository invocation)]))
 
 (: execute-in-repository (-> invocation Status))
 (define (execute-in-repository invocation)
@@ -506,6 +512,23 @@
     (for ([shadowed (in-list (pattern-shadowed pattern))])
       (printf "shadows: ~a\n" shadowed))
     (printf "summary: ~a\n" (pattern-summary (file->string (pattern-path pattern)))))
+  'success)
+
+;; Print the path of the first HANDOFF.md installed under $XDG_DATA_DIRS, for
+;; the agent to read with its own tools.
+(: handle-guide (-> Status))
+(define (handle-guide)
+  (define directories (data-directories))
+  (define found
+    (findf file-exists?
+           (for/list : (Listof Path) ([base (in-list directories)])
+             (build-path base "handoff" "HANDOFF.md"))))
+  (unless found
+    (raise-handoff-error "no handoff/HANDOFF.md in ~a"
+                         (if (empty? directories)
+                             "$XDG_DATA_DIRS, which has no absolute directories"
+                             (string-join (map path->string directories) ", "))))
+  (displayln (path->string found))
   'success)
 
 ;; Stubs out a new handoff arc. Creates each of the expected files with minimal
@@ -840,25 +863,32 @@
   (branch-head (line (git* project "symbolic-ref" "--quiet" "--short" "HEAD"))
                (line (git* project "rev-parse" "--verify" "--quiet" "HEAD"))))
 
+;;; Installed files
+
+;; The XDG Base Directory specification ignores relative paths.
+(: absolute-directory (-> (U String #f) (U Path #f)))
+(define (absolute-directory text)
+  (and text (non-empty-string? text) (absolute-path? text) (string->path text)))
+
+;; The directories of $XDG_DATA_DIRS, in order of preference.
+(: data-directories (-> (Listof Path)))
+(define (data-directories)
+  (filter-map absolute-directory
+              (string-split
+               (let ([value (getenv "XDG_DATA_DIRS")])
+                 (if (and value (non-empty-string? value))
+                     value
+                     "/usr/local/share:/usr/share"))
+               ":")))
+
 ;;; Workflow patterns
 
 (: pattern-directories (-> (Listof Path)))
 (define (pattern-directories)
-  ;; The XDG Base Directory specification ignores relative paths.
-  (define (absolute [text : (U String #f)])
-    (and text (non-empty-string? text) (absolute-path? text) (string->path text)))
   (define config
-    (or (absolute (getenv "XDG_CONFIG_HOME"))
+    (or (absolute-directory (getenv "XDG_CONFIG_HOME"))
         (build-path (find-system-path 'home-dir) ".config")))
-  (define data-dirs
-    (filter-map absolute
-                (string-split
-                 (let ([value (getenv "XDG_DATA_DIRS")])
-                   (if (and value (non-empty-string? value))
-                       value
-                       "/usr/local/share:/usr/share"))
-                 ":")))
-  (for/list ([base (in-list (cons config data-dirs))])
+  (for/list ([base (in-list (cons config (data-directories)))])
     (build-path base "handoff" "workflows")))
 
 (: find-patterns (-> (Listof pattern)))

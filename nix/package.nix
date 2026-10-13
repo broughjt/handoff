@@ -18,6 +18,7 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       ../handoff
       ../workflows
+      ../HANDOFF.md
     ];
   };
 
@@ -51,12 +52,15 @@ stdenvNoCC.mkDerivation {
 
   # The script calls git commands and runs user checks under bash. It finds
   # workflow patterns in each $XDG_DATA_DIRS/handoff/workflows/, after the
-  # user's own, so the wrapper puts the default patterns first among those.
+  # user's own, and HANDOFF.md, the concepts the skills share, at the first
+  # $XDG_DATA_DIRS/handoff/HANDOFF.md, so the wrapper puts the package's own
+  # share directory first among those.
   installPhase = ''
     runHook preInstall
     cp -r dist $out
     mkdir -p $out/share/handoff
     cp -r workflows $out/share/handoff/workflows
+    cp HANDOFF.md $out/share/handoff/HANDOFF.md
     wrapProgram $out/bin/handoff \
       --prefix PATH : ${
         lib.makeBinPath [
@@ -94,6 +98,7 @@ stdenvNoCC.mkDerivation {
     printf '[[check]]\nid = "x"\nclaim = "holds"\nrun = "true"\n' > $repository/arc/checks.toml
     $out/bin/handoff --repository $repository check
     $out/bin/handoff workflow list | grep -qx 'name: agent-implements'
+    test "$($out/bin/handoff guide)" = $out/share/handoff/HANDOFF.md
     runHook postInstallCheck
   '';
 
