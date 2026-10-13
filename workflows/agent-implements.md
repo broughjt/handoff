@@ -9,9 +9,9 @@ implementation deviated from the plan, and why.
 
 ## Review
 
-One checkpoint, `proposal`: the commits written this session.
+One unit: the commits written this session, named by subject on their branch.
 
-If the session ends with commits the user has not reviewed, set `Review:
-in-review, proposal <sha>` after committing and writing the log entry that
-briefs the reviewer. If the user reviews them in session, the field stays
-`none` and the log records the acceptance.
+If the session ends with commits the user has not reviewed, add an item to
+`review.md` naming them by subject on their branch, in the update whose log
+entry briefs the reviewer. If the user reviews them in
+session, nothing is added and the log entry records the acceptance.
