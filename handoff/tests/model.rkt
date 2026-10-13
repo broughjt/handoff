@@ -147,3 +147,23 @@
                          "    # Indented code" "####### Seven" "Title\n=====\n"))])
     (check-exn exn:fail:handoff? (λ () (entry-headline text)) text)))
 
+
+;;; Comparing runs
+
+(test-case "results compare by id, definition and outcome"
+  (define (result [id : String] [run : String] [outcome : Outcome])
+    (check-result (make-check id "claim" run 60) outcome 0.0 "" 0 (if (eq? outcome 'true) 0 1)))
+  (define earlier (list (result "same" "true" 'true)
+                        (result "flips" "test -e x" 'true)
+                        (result "redefined" "old" 'true)
+                        (result "gone" "true" 'true)))
+  (define current (list (result "new" "true" 'true)
+                        (result "redefined" "new" 'true)
+                        (result "flips" "test -e x" 'false)
+                        (result "same" "true" 'true)))
+  (define-values (changes removed) (compare-results current earlier))
+  (check-equal? (map check-change-after changes) current)
+  (check-equal? (map check-change-change changes) '(new redefined flipped unchanged))
+  (check-equal? (map check-change-before changes)
+                (list #f (third earlier) (second earlier) (first earlier)))
+  (check-equal? removed (list (check-result-check (fourth earlier)))))

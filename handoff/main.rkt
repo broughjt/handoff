@@ -4,6 +4,7 @@
 (require racket/cmdline
          racket/file
          racket/format
+         racket/function
          racket/list
          racket/path
          racket/port
@@ -62,8 +63,10 @@
 
 ;;; Command line
 
-(define-type Subcommand (U list-subcommand check-subcommand lint-subcommand update-subcommand))
+(define-type Subcommand
+  (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
+(struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
 (struct update-subcommand ([step : (U 'begin 'commit)] [arc : (U String #f)]) #:transparent)
@@ -80,6 +83,7 @@
    #:usage-help
    "Commands:"
    "  list   list handoff arcs"
+   "  start  get the brief for starting work on a handoff arc"
    "  check  run the commands in checks.toml and report their results"
    "  lint   validate expected structure of a handoff arc"
    "  update record a log entry: --begin runs the checks and records them, --commit commits"
@@ -114,6 +118,7 @@
       [("--archived") "List archived arcs instead" (set! archived? #t)]
       #:args ()
       (list-subcommand archived?))]
+    [("start") (start-subcommand (parse-arc-argument program arguments))]
     [("check") (check-subcommand (parse-arc-argument program arguments))]
     [("lint") (lint-subcommand (parse-arc-argument program arguments))]
     [("update")
@@ -129,7 +134,7 @@
       #:args ([arc #f])
       (update-subcommand (or step (raise-handoff-error "update requires --begin or --commit"))
                       (and arc (assert arc string?))))]
-    [else (raise-handoff-error "unknown command ~a; expected list, check, lint, or update" subcommand)]))
+    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, or update" subcommand)]))
 
 (: execute (-> invocation Status))
 (define (execute invocation)
@@ -141,6 +146,8 @@
   (cond
     [(list-subcommand? subcommand)
      (handle-list repository (list-subcommand-archived? subcommand))]
+    [(start-subcommand? subcommand)
+     (handle-start repository (select-arc repository (start-subcommand-arc subcommand)))]
     [(check-subcommand? subcommand)
      (handle-check repository (select-arc repository (check-subcommand-arc subcommand)))]
     [(lint-subcommand? subcommand)
@@ -180,6 +187,152 @@
     (displayln (diagnostic->string diagnostic)))
   (printf "~a: ~a lint errors\n" arc (length diagnostics))
   (if (empty? diagnostics) 'success 'failure))
+
+;; Brief an agent to start work on a handoff arc. First check for abnormalities
+;; like a failing lint diagnostics or a pending log entry. Next, run the checks
+;; output the diff between the last check run. Finally output start metadata and
+;; state files inline.
+(: handle-start (-> Path String Status))
+(define (handle-start repository* arc)
+  (define repository (normalize-path repository*))
+  (define arc-path (build-path repository arc))
+  (define project (find-project-repository repository))
+  (define (show-path [path : Path]) (some-system-path->string (find-relative-path project path)))
+  (define first-section? #t)
+  (define (section [name : String])
+    (unless first-section? (newline))
+    (set! first-section? #f)
+    (printf "==> ~a <==\n" name))
+  (define (inline [path : Path])
+    (when (file-exists? path)
+      (section (show-path path))
+      (define text (file->string path))
+      (write-string text)
+      (unless (or (string=? text "") (string-suffix? text "\n"))
+        (newline))))
+
+  (section "handoff start")
+  (printf (string-append "arc: ~a\n"
+                         "project: ~a\n"
+                         "paths are relative to the project\n")
+          arc project)
+
+  (define diagnostics (lint-arc arc-path repository))
+  (unless (empty? diagnostics)
+    (section "lint")
+    (for ([diagnostic (in-list diagnostics)])
+      (printf "~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic))))
+
+  (define pending (pending-log-entry arc-path))
+  (when pending
+    (section "pending log entry")
+    (define entry-path (log-entry-path arc-path pending))
+    (define run (with-handlers ([exn:fail:handoff? (const #f)])
+                  (parse-check-run (read-toml (build-path entry-path results-file)))))
+    (printf "log/~a was begun with handoff update --begin but not committed, so it is not the baseline\n"
+            pending)
+    (printf "results: ~a\n"
+            (if run
+                (format "recorded on ~a at ~a"
+                        (check-run-host run) (timestamp->string (check-run-started run)))
+                "none readable"))
+    (printf "entry.md: ~a\n" (if (file-exists? (build-path entry-path entry-file)) "written" "not written")))
+
+  (define baseline (find-baseline arc-path))
+  (define previous (and baseline (baseline-results baseline)))
+
+  (section "project")
+  (report-project project baseline)
+
+  (section "handoff repository")
+  (define dirty (string-split (git repository "status" "--porcelain") "\n"))
+  (cond
+    [(empty? dirty) (printf "no uncommitted changes\n")]
+    [else
+     (printf "uncommitted, relative to ~a:\n" (show-path repository))
+     (for ([line (in-list dirty)])
+       (printf "  ~a\n" line))])
+
+  (section "checks")
+  (cond
+    [(not baseline) (printf "no earlier log entry to compare against\n")]
+    [previous (printf "compared against log/~a, recorded on ~a at ~a\n"
+                     (baseline-number baseline) (check-run-host previous)
+                     (timestamp->string (check-run-started previous)))]
+    [else (printf "not compared: log/~a/~a: ~a\n"
+                  (baseline-number baseline) results-file (baseline-run baseline))])
+  (define checks
+    (with-handlers ([exn:fail:handoff? exn-message])
+      (parse-checks (read-toml (build-path arc-path checks-file)))))
+  (cond
+    [(string? checks) (printf "not run: ~a: ~a\n" checks-file checks)]
+    [else
+     (newline)
+     (report (run-checks checks (project-branch-head project)) #:baseline baseline)])
+
+  (define start*
+    (with-handlers ([exn:fail:handoff? (λ (_) #f)])
+      (parse-start (read-toml (build-path arc-path start-file)))))
+  (when start*
+    (define (resolve [scope-path : scope-path])
+      (resolve-scope-path scope-path #:arc arc-path #:repository repository #:project project))
+    (define (describe [path : Path])
+      (if (file-exists? path) (show-path path) (format "~a (missing)" (show-path path))))
+    (define workflow (resolve (start-workflow start*)))
+    (section "start")
+    (printf "Next:\n")
+    (for ([line (in-list (string-split (start-next start*) "\n" #:trim? #f))])
+      (printf "  ~a\n" line))
+    (printf "Workflow: ~a\n" (describe workflow))
+    (printf "Read first:\n")
+    (when (empty? (start-read-first start*))
+      (printf "  nothing\n"))
+    (for ([read (in-list (start-read-first start*))])
+      (printf "- ~a: ~a\n" (describe (resolve (read-first-path read))) (read-first-reason read)))
+    (inline workflow))
+
+  (for ([name (in-list state-files)])
+    (inline (build-path arc-path name)))
+  (when baseline
+    (inline (build-path (log-entry-path arc-path (baseline-number baseline)) entry-file)))
+  'success)
+
+;; The most commits listed when reporting what changed in the project.
+(define commit-limit 20)
+
+;; Compare the project's branch and head with those recorded in the baseline.
+(: report-project (-> Path (U baseline #f) Void))
+(define (report-project project baseline)
+  (define current (project-branch-head project))
+  (define earlier (and baseline (baseline-results baseline)))
+  (printf "now: ~a\n" (describe-branch-head current))
+  (when (and baseline earlier)
+    (define number (baseline-number baseline))
+    (define recorded (check-run-project-head earlier))
+    (printf "at log/~a: ~a\n" number (describe-branch-head recorded))
+    (unless (equal? (branch-head-branch recorded) (branch-head-branch current))
+      (printf "the branch differs\n"))
+    (define old (branch-head-head recorded))
+    (define new (branch-head-head current))
+    (define (commits [heading : String] . [arguments : String *])
+      (define lines
+        (string-split (apply git project "log" "--abbrev=12" "--format=%m %h %s" arguments) "\n"))
+      (printf "~a\n" heading)
+      (for ([line (in-list (take lines (min commit-limit (length lines))))])
+        (printf "  ~a\n" line))
+      (when (> (length lines) commit-limit)
+        (printf "  and ~a more\n" (- (length lines) commit-limit))))
+    (cond
+      [(equal? old new) (printf "no new commits\n")]
+      [(not new) (printf "the project has no commits now\n")]
+      [(not old) (commits "commits, all new since:" new)]
+      [(not (git* project "cat-file" "-e" (string-append old "^{commit}")))
+       (printf "the recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")]
+      [(git* project "merge-base" "--is-ancestor" old new)
+       (commits "commits since:" (format "~a..~a" old new))]
+      [else
+       (commits "the recorded head is no longer an ancestor of HEAD, so history was rewritten; < marks commits only in the recorded history, > only in the current one:"
+                "--left-right" (format "~a...~a" old new))])))
 
 ;; Recording a log entry happens in two command-line steps: `update --begin`
 ;; records check results in a results.toml file for the pending log entry, the
@@ -269,9 +422,14 @@
                          arc (length diagnostics)
                          (string-join (map diagnostic->string diagnostics) "\n"))))
 
-(: report (-> check-run Void))
-(define (report run)
+(: report (->* (check-run) (#:baseline (U baseline #f)) Void))
+(define (report run #:baseline [baseline #f])
   (define results (check-run-results run))
+  (define earlier (and baseline (baseline-results baseline)))
+  (define-values (changes removed)
+    (if earlier
+        (compare-results results (check-run-results earlier))
+        (values null null)))
   (define (seconds [duration : Real]) (string-append (~r duration #:precision '(= 1)) "s"))
   (define (width [heading : String] [cells : (Listof String)])
     (apply max (string-length heading) (map string-length cells)))
@@ -284,22 +442,42 @@
             (~a claim #:min-width claim-width)
             (~a outcome #:min-width 7)
             (~a duration #:min-width duration-width #:align 'right)))
+  (define (note [template : String] . [arguments : Any *])
+    (printf "         ~a\n" (apply format template arguments)))
+  (define (print-output [label : String] [result : check-result])
+    (unless (string=? (check-result-output result) "")
+      (note "~a:" label)
+      (unless (zero? (check-result-truncated result))
+        (note "  [~a bytes before this were not kept]" (check-result-truncated result)))
+      (define lines (string-split (check-result-output result) "\n"))
+      (for ([line (in-list (drop lines (max 0 (- (length lines) output-lines))))])
+        (note "  ~a" line))))
   (row "ID" "CLAIM" "RESULT" "DURATION")
   (for ([result (in-list results)])
     (define check (check-result-check result))
     (define outcome (check-result-outcome result))
     (row (check-id check) (check-claim check) (symbol->string outcome) (seconds (check-result-duration result)))
+    (define change (findf (λ ([change : check-change]) (eq? (check-change-after change) result)) changes))
+    (define before (and change (check-change-before change)))
+    (define number (and baseline (baseline-number baseline)))
+    (case (and change (check-change-change change))
+      [(flipped) (note "was ~a at log/~a" (check-result-outcome (assert before)) number)]
+      [(redefined) (note "definition changed since log/~a, where it was ~a"
+                         number (check-result-outcome (assert before)))]
+      [(new) (note "new since log/~a" number)]
+      [else (void)])
     (unless (eq? outcome 'true)
       (if (eq? outcome 'timeout)
-          (printf "         after ~as\n" (check-timeout check))
-          (printf "         exit ~a\n" (check-result-exit result)))
-      (unless (string=? (check-result-output result) "")
-        (printf "         output:\n")
-        (unless (zero? (check-result-truncated result))
-          (printf "           [~a bytes before this were not kept]\n" (check-result-truncated result)))
-        (define lines (string-split (check-result-output result) "\n"))
-        (for ([line (in-list (drop lines (max 0 (- (length lines) output-lines))))])
-          (printf "           ~a\n" line)))))
+          (note "after ~as" (check-timeout check))
+          (note "exit ~a" (check-result-exit result))))
+    (define flipped? (and change (eq? (check-change-change change) 'flipped)))
+    (when (or flipped? (not (eq? outcome 'true)))
+      (print-output "output" result))
+    (when (and flipped? before)
+      (print-output (format "output at log/~a" number) before)))
+  (for ([check (in-list removed)])
+    (printf "removed since log/~a: ~a (~a)\n"
+            (and baseline (baseline-number baseline)) (check-id check) (check-claim check)))
   (define counts
     (for*/list : (Listof String) ([outcome (in-list '(true false unknown timeout))]
                                   [count (in-value (count (λ ([r : check-result]) (eq? (check-result-outcome r) outcome)) results))]
@@ -526,6 +704,30 @@
   (define-values (numbered invalid) (partition parse-log-entry-name names))
   (values (sort (map (λ ([name : String]) (assert (parse-log-entry-name name))) numbered) <)
           (sort invalid string<?)))
+
+;; The baseline is the log entry that `handoff start` compares against, that is,
+;; the highest-numbered entry that is not pending.
+(struct baseline ([number : Exact-Positive-Integer] [run : (U check-run String)]) #:transparent)
+
+(: baseline-results (-> baseline (U check-run #f)))
+(define (baseline-results baseline)
+  (define run (baseline-run baseline))
+  (and (check-run? run) run))
+
+;; A latest complete entry without readable results is still the baseline,
+;; so that a broken entry is reported rather than skipped for an older one.
+(: find-baseline (-> Path (U baseline #f)))
+(define (find-baseline arc)
+  (define-values (numbers _invalid) (list-log-entries arc))
+  (define pending (pending-log-entry arc))
+  (define complete (filter (λ ([number : Exact-Positive-Integer]) (not (eqv? number pending))) numbers))
+  (and (pair? complete)
+       (let ([number (last complete)])
+         (baseline
+          number
+          (with-handlers ([exn:fail:handoff? exn-message])
+            (define results-path (build-path (log-entry-path arc number) results-file))
+            (parse-check-run (read-toml results-path)))))))
 
 ;; Get the number of the update in progress, which is the highest-numbered log
 ;; entry not yet in the handoff repository's HEAD (#f if this does not exist).

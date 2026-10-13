@@ -46,7 +46,11 @@
          parse-check-result
          parse-check-run
          check-run->toml
-         describe-branch-head)
+         timestamp->string
+         describe-branch-head
+         Change
+         (struct-out check-change)
+         compare-results)
 
 ;;; Layout
 
@@ -291,7 +295,7 @@
   (define project (check-run-project-head run))
   (fprintf out "[run]\n")
   (field "host" (toml-string (check-run-host run)))
-  (field "started" (moment->iso8601 (posix->moment (check-run-started run) 0)))
+  (field "started" (timestamp->string (check-run-started run)))
   (field "duration" (toml-float (check-run-duration run) 3))
   (fprintf out "\n[project]\n")
   (let ([head (branch-head-head project)])
@@ -326,3 +330,43 @@
   (format "~a at ~a"
           (or (branch-head-branch branch-head*) "a detached HEAD")
           (if head (substring head 0 (min 12 (string-length head))) "no commit")))
+
+;; Seconds since the epoch as an ISO 8601 datetime in UTC.
+(: timestamp->string (-> Integer String))
+(define (timestamp->string seconds)
+  (moment->iso8601 (posix->moment seconds 0)))
+
+;;; Comparing runs
+
+(define-type Change (U 'unchanged 'flipped 'redefined 'new))
+
+(struct check-change ([after : check-result]
+                      [before : (U check-result #f)] ;; `#f` when the `after` check is new
+                      [change : Change])
+  #:transparent)
+
+;; Obtain a list of `check-changes` for overlapping or new ids and a list of
+;; removed ids.
+(: compare-results (-> (Listof check-result) (Listof check-result)
+                       (Values (Listof check-change) (Listof check))))
+(define (compare-results current previous)
+  (define (id [result : check-result]) (check-id (check-result-check result)))
+  (define by-id
+    (for/hash : (Immutable-HashTable String check-result) ([result (in-list previous)])
+      (values (id result) result)))
+  (define changes
+    (for/list : (Listof check-change) ([after (in-list current)])
+      (define before (hash-ref by-id (id after) #f))
+      (define change
+        (cond
+          [(not before) 'new]
+          [(not (equal? (check-result-check before) (check-result-check after))) 'redefined]
+          [(eq? (check-result-outcome before) (check-result-outcome after)) 'unchanged]
+          [else 'flipped]))
+      (check-change after before change)))
+  (define ids (map id current))
+  (values changes
+          (filter-map
+           (lambda ([result : check-result])
+             (and (not (member (id result) ids)) (check-result-check result)))
+           previous)))
