@@ -1,205 +1,132 @@
 ---
 name: handoff-update
 description: >-
-  Record a session's work into a handoff document: write the progress-log
-  entry, edit state in place, refresh the Start-here block for the next agent,
-  and promote durable findings when work closes out. Use at the end of a
-  session on multi-session work or when the user asks to update the handoff
-  doc. Companion skills are handoff-create and handoff-start.
+  Record a handoff for an arc: run the checks, write the log entry, edit the
+  arc's state in place, refresh start.toml for the next session, confirm
+  decisions with the user, and commit. Use when the user asks for an update,
+  at the end of a session on multi-session work, or with `close` to close an
+  arc. Companion skills are handoff-create and handoff-start.
 ---
 
-# Updating a handoff document
+# Recording a handoff
 
-Run this at the end of a working session on an arc. It keeps the document from
-degrading. State should be edited in place, history moved out, and findings
-promoted up.
+Arguments:
 
-Handoff documents live in the **handoff repository**, a Git repository of their
-own at `.scratch/handoff-<project>/`, where `<project>` is the name of the
-project's top-level directory. The project ignores `.scratch/`, so `rg --files`,
-`fd` and the project's own Git listings omit it; reach it by path. Every path
-below is written from the project root, as the documents write them. Work in the
-repository with `git -C .scratch/handoff-<project>`; handoff documents are
-committed there and never in the project.
+- *(none)*: update the only arc
+- `<arc>`: update that arc
+- `close`, `<arc> close`: close the arc, only when the user has said to
 
-Find the document directly from the filesystem:
+## Step 1: Read HANDOFF.md
 
-```sh
-repo=$(find .scratch -mindepth 1 -maxdepth 1 -type d -name 'handoff-*')
-find "$repo" -maxdepth 1 -type f \
-  -name 'handoff-*.md' ! -name 'handoff-*-log.md' -print
-```
+Run `handoff guide` and read the file it names, unless you have already read it
+this session and it is still in view. Its *Updates*, *Decisions and
+provenance* and *Writing state* sections govern everything below.
 
-Do not use `rg --files`, `git ls-files`, or another ignore-aware file listing.
-Ask which document to use if several match, as `handoff-start` specifies. Read
-both the handoff document and its log before writing anything.
+## Step 2: Settle the inputs
 
-## Step 1: Write the log entry
+`--commit` refuses if `checks.toml` or the project's branch or head changed
+after `--begin`, so do both first:
 
-Entries in `handoff-<slug>-log.md` run newest first. A new one goes **directly
-below the preamble**, above the previous entry.
+- Commit the session's project work.
+- Edit `checks.toml`: add checks for what this session established, turn
+  lasting negatives into checks that are currently false, fix squashing that
+  produced an unknown.
 
-```markdown
-## <YYYY-MM-DD>: <headline: what changed, not "worked on X">
-```
+## Step 3: Begin
 
-If the log does not exist, create it with the preamble `handoff-create` step 4
-specifies.
+Run `handoff update --begin [arc]`. If lint refuses, fix the files it names
+and rerun. Read the results it prints before writing anything; the entry
+explains them.
 
-Cover what was done, what was **observed** with real commands and real numbers,
-where the work deviated from the plan and why, which commits are awaiting
-review, and any change of workflow along with the reason for it.
+## Step 4: Write the entry
 
-**Deviations from the plan, each with its argument, are the entry's most
-valuable content.** This is the reviewer's brief, and it is the only part of
-what they read that you author. They already have the plan, the diff and this
-document, so anything here that duplicates those is dead weight.
+Write `entry.md` at the path `--begin` printed. Open it with a heading that
+says what changed, not "worked on X"; it becomes the commit subject.
 
-**Do not diagnose your own code.** Remark on deviations and on aspects you are
-uncertain about or think deserve attention. A deviation's argument is required
-and is not a diagnosis; a verdict on your own code's quality is out of bounds.
-Of course, if asked directly by the user, answer.
+- What was done, and what was observed outside the checks, with real numbers.
+- **Deviations from the plan, each with its argument.** This is the most
+  valuable content in the entry: it is the reviewer's brief, and the only part
+  of what they read that you write. They already have the plan and the diff.
+- Significant results explained: a flip, an unknown, a check still false. Do
+  not copy the results; the next start shows them.
+- What was not run or not done this session.
+- Decisions made this session, with provenance, and any change of workflow
+  with its reason.
+- Items removed from `review.md`, citing the user's words.
 
-**Entries are immutable.** Add them; never rewrite, collapse or delete previous
-ones.
+**Do not judge your own code.** Flag what you are unsure of or think deserves
+attention, but leave verdicts on its quality to the reviewer unless the user
+asks for yours.
 
-Never record a verification result you did not run this session. If the suite
-was not run, say so.
+## Step 5: Edit state in place
 
-## Step 2: Edit state in place
+- `tasks.md`: status, with the date and the commit subject for finished tasks.
+- Facts: to a topic document, root or arc-local by the test in *Where facts
+  go*. Correct wrong ones where they live.
+- `do-not-reopen.md` and `open-questions.md`: only as *Decisions and
+  provenance* allows. Delete an answered question and move its answer where it
+  belongs. Set or clear `— blocks Next.` for the `next` you are about to
+  write.
+- `review.md`: add an item for work that ends unreviewed, by the workflow's
+  rule.
+- `arc.md`: when the route or done-when changed.
+- Task documents whose task closed: promote what is durable, then `git rm`
+  them.
 
-In the handoff document, **editing, never appending corrections**:
+## Step 6: Refresh `start.toml`
 
-- **Tasks**: update status. Note the date and commit for finished tasks.
-- **Facts established**: promote durable findings out of this session's log
-  entry. A finding qualifies if future work would otherwise re-derive it. Give
-  each enough context to act on cold.
-- **Do not reopen**: add scope decisions settled this session and approaches
-  tried and rejected, with the reason and the date.
-- **Open questions**: delete answered ones, moving the answer into the section
-  it belongs in. Add newly reserved decisions. Mark an entry `— blocks Next.`
-  when the action you just wrote into `Next` cannot proceed without it, and
-  clear the marker when it no longer applies. You are the only agent in a
-  position to judge that; the next one will take the marker at face value.
-- Anything the session proved wrong gets **corrected where it stands**.
-  Superseded text is deleted, not annotated with a correction beside it.
+Rewrite every field for the next session, which knows nothing:
 
-## Step 3: Refresh `Start here`
+- `next`: one concrete action, beginnable cold.
+- `read_first`: what that action needs, each with a reason. Drop entries whose
+  task closed. This is the field that saves the next session the most time
+  and the one most often left stale.
+- `workflow`: the copy governing `next`. To switch, run `handoff workflow
+  install` or `fork`, then set the field to the reference it prints.
 
-This block is the interface to the next session. You know what the next agent
-needs; they know nothing. Rewrite every field, and keep the whole block **under
-~25 lines**.
+## Step 7: Confirm decisions
 
-- **Next**: one concrete action, beginnable cold. When it follows a procedure
-  that repeats across sessions, put that procedure under a named section in the
-  workflow copy and name the section here instead of restating it.
-- **Read first**: the specific files that action requires, each with a clause
-  saying why. This is the field that saves the next session the most time and
-  the one most often left stale.
-- **Workflow**: the pattern governing `Next` and the path to its copy. That is
-  the task's override when it has one, otherwise the arc default. The arc runs
-  against `.scratch/handoff-<project>/workflow-<name>.md`, never against the
-  shared pattern it was copied from, so a pattern named here without a copy
-  installed is a defect. If the workflow changed this session, or the next task
-  carries an override with no copy yet, install it from
-  `../handoff-create/reference/workflows/`, point this field at it, and record
-  the switch and its reason in the log. Amending a `verbatim` copy means forking
-  it under a new name. Amend a `forked` or `coined` copy in place, date the
-  change in the file and record it in the log; see
-  `../handoff-create/reference/workflows/README.md`.
-- **Review**: see below.
-- **Verified state**: see below.
+Skip this step in an unattended session (begun with `handoff-start go`), and
+when there is nothing to ask.
 
-### Writing `Review`
+Otherwise ask one round with the structured question tool, recommendation
+first and labeled `(Recommended)`, covering:
 
-This field says whether a review is open. Two states:
+- every line you are recording as `(user, …)`, so the user can check your
+  reading of what they said;
+- every new proposal `next` rests on;
+- every check newly named as a task's done-when.
 
-- `none`: no open review. `Next` proposes work.
-- `in-review, <checkpoint> <referent>`: a review is open. The referent is a
-  commit SHA, or a path when the thing under review is not a commit. `Next` says
-  what resumes once it closes, not what to do now. The arc's
-  `.scratch/handoff-<project>/workflow-<name>.md` file will say which
-  checkpoints to include. Do not invent a checkpoint the workflow does not
-  define, and do not carry one over from a workflow the arc has switched away
-  from.
+Answers become `(user, date)` tags; refusals become edits; anything left
+unanswered stays `(agent proposal, date, unconfirmed)`. If the user is gone,
+record the proposals as unconfirmed rather than waiting.
 
-**State, checkpoint and referent, nothing else.** Do not include what the review
-has found or how much of it is left.
+## Step 8: Commit
 
-Move the field to `none` if the user indicates to you that review is finished. A
-review that opens and closes inside one session never needs the field, so `none`
-does not mean the work went unreviewed.
+Stage the root files this update changed (topic documents, shared workflow
+copies) with `git -C .scratch/handoff add`. Then run `handoff update --commit
+[arc]`.
 
-### Writing `Verified state`
+If it refuses, follow what it says; usually that is rerunning `--begin`, which
+keeps the entry. Reread the new results, and amend the entry if they change
+its story.
 
-Two jobs in one field: an instruction for the next session, then a report from
-the last session that actually ran it, which is not always this one.
+It lists what it left uncommitted; mention that to the user. Do not push.
 
-Name commands **cheapest-catch-all first**. `handoff-start` reruns whichever
-command appears first, so that slot belongs to the check most likely to notice
-the document going stale for the least time spent, not to the most thorough one.
+## Step 9: Report
 
-Open the field with the **date the observations were made**. `handoff-start`
-runs `git log` since that date to find commits the document does not describe,
-so a date that does not match the observations beside it silently disables that
-check.
+Tell the user what changed in the arc, what you promoted or removed, and any
+claim you could not verify, which stays marked rather than quietly dropped.
 
-For a repository whose user rewrites history, record the current branch tip as
-the reconciliation point and describe the content state that matters. Do not
-make the handoff depend on a list of per-commit SHAs expected to disappear.
-`Review` still names the current commit when a commit is under review.
+## Closing an arc
 
-Record the **observed duration** beside each command. The next session derives
-its timeout from that figure. Only record a duration you actually observed. If
-you did not time it, write nothing rather than guessing, and if `handoff-start`
-timed out this session, record that instead of a duration.
+Only when the user says the arc is closed.
 
-End with what was **not** run. That negative is what stops the next agent
-trusting a green that only ever covered half the tree.
-
-```markdown
-**Verified state:** 2026-08-26: `stack build` (~90s warm) → green; `stack test`
-(4m) → 3 failures in Spec.Metric. **Not run:** nix flake check.
-```
-
-## Step 4: Promote and prune
-
-**When a task closes** (landed and reviewed, or abandoned): confirm its durable
-findings reached *Facts established* and its rejected approaches reached *Do not
-reopen*. The log entries behind it can then be left exactly where they are.
-
-Move any artifact the task owned, its plan doc for instance, to
-`.scratch/handoff-<project>/archive/` with `git mv`, **and drop it from `Read
-first`**.
-
-**When the handoff document is getting long**: follow the handoff document's
-*Keeping this doc current* section, and tell the user what you moved.
-
-**When an arc completes**: `git mv` both files to
-`.scratch/handoff-<project>/archive/`, together with every workflow copy that is
-bespoke to this arc, overrides included, and any
-`.scratch/handoff-<project>/review-<slug>.md` or
-`.scratch/handoff-<project>/spike-<slug>.md` the arc produced. A `verbatim`
-workflow copy stays put, since another arc may be running against it. Promote
-anything durable that outlives the arc first. An archived document is history,
-and nothing should have to be grepped out of it.
-
-## Step 5: Commit and push
-
-Commit everything the session changed in the handoff repository as one commit,
-with a one-line subject naming the arc and the log entry's headline:
-
-```sh
-git -C "$repo" add -A
-git -C "$repo" commit -m "<arc>: <headline>"
-git -C "$repo" push
-```
-
-If a push fails (e.g. no remote is configured, the remote cannot be reached, the
-push is rejected), add this to the report. Never force-push.
-
-## Step 6: Report
-
-Tell the user what you changed in the document, what you promoted, and what you
-moved or archived. If you found a claim you could not verify, say which one and
-leave it marked rather than quietly dropping it.
+1. Move everything that outlives the arc to root topic documents. Check that
+   no other arc's `read_first` points into this one.
+2. Run steps 2 through 9. The entry says how the arc ended.
+3. Tag the commit: `git -C .scratch/handoff tag archive/<arc>`. The tag keeps
+   the arc's final state addressable.
+4. `git -C .scratch/handoff rm -r <arc>`, then `git -C .scratch/handoff
+   commit -m "<arc>: close"`. Remove a verbatim workflow copy at the root in
+   the same commit when no other arc names it.

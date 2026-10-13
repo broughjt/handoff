@@ -445,13 +445,13 @@
 
 (define placeholder-checks
   (string-append
-   "# Each check is a claim about the project and a command that acts as a"
-   "mechanical decision procedure for the claim. Checks run in file order."
-   "The `timeout` field is measured in seconds; it is optional and defaults to "
-   (number->string default-timeout) ".\n"
+   "# Each check is a claim about the project and a command that acts as a\n"
+   "# mechanical decision procedure for the claim. Checks run in file order.\n"
+   "# The `timeout` field is measured in seconds; it is optional and defaults to\n"
+   "# " (number->string default-timeout) ".\n"
    "[[check]]\n"
    "id = " (toml-string placeholder-check-id) "\n"
-   "claim = " (toml-string "An natural language claim that is either true or false") "\n"
+   "claim = " (toml-string "A natural language claim that is either true or false") "\n"
    "run = " (toml-string (string-append
                           "echo \"Replace this placeholder from handoff new with the arc's checks. "
                           "run is a shell command, run from the project root, that exits 0 when "
