@@ -1,13 +1,11 @@
 #lang typed/racket/base
-;; The handoff repository's files as data: its layout, start.toml, checks.toml,
-;; results.toml and log entries. Parsing and writing only; nothing here runs a
-;; process or calls Git.
 
 (require racket/function
          racket/list
          racket/match
          racket/math
          racket/string
+         typed/file/sha1
          "error.rkt"
          "toml.rkt")
 
@@ -48,10 +46,17 @@
          parse-check-run
          check-run->toml
          timestamp->string
+         date->string
          describe-branch-head
          Change
          (struct-out check-change)
-         compare-results)
+         compare-results
+         (struct-out pattern)
+         pattern-name?
+         pattern-summary
+         workflow-copy-name
+         workflow-provenance
+         new-arc-files)
 
 ;;; Layout
 
@@ -61,7 +66,13 @@
 ;; The expected layout of a handoff arc directory
 (define start-file "start.toml")
 (define checks-file "checks.toml")
-(define state-files (list "arc.md" "tasks.md" "do-not-reopen.md" "open-questions.md" "review.md"))
+(define state-headings
+  (list (cons "arc.md" #f)
+        (cons "tasks.md" "Tasks")
+        (cons "do-not-reopen.md" "Do not reopen")
+        (cons "open-questions.md" "Open questions")
+        (cons "review.md" "Review")))
+(define state-files (map (inst car String (U String #f)) state-headings))
 (define log-directory "log")
 (define entry-file "entry.md")
 (define results-file "results.toml")
@@ -341,6 +352,11 @@
 (define (timestamp->string seconds)
   (moment->iso8601 (posix->moment seconds 0)))
 
+;; Seconds since the epoch as an ISO 8601 date in UTC.
+(: date->string (-> Integer String))
+(define (date->string seconds)
+  (substring (timestamp->string seconds) 0 10))
+
 ;;; Comparing runs
 
 (define-type Change (U 'unchanged 'flipped 'redefined 'new))
@@ -375,3 +391,50 @@
            (lambda ([result : check-result])
              (and (not (member (id result) ids)) (check-result-check result)))
            previous)))
+
+;;; Workflow patterns and new arcs
+
+;; A workflow pattern's file, with the files of the same name in lower
+;; precedence directories that it shadows.
+(struct pattern ([name : String] [path : Path] [shadowed : (Listof Path)]) #:transparent)
+
+;; A pattern's name is its file name without `.md`. We use lowercase only so
+;; that a README.md sitting in the same directory as the patterns does not
+;; count.
+(: pattern-name? (-> String Boolean))
+(define (pattern-name? name)
+  (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
+
+;; The first paragraph after a pattern's opening headings.
+(: pattern-summary (-> String String))
+(define (pattern-summary text)
+  (define (heading? [line : String]) (regexp-match? #px"^ {0,3}#" line))
+  (define (blank? [line : String]) (string=? (string-trim line) ""))
+  (define body (dropf (string-split text "\n" #:trim? #f)
+                      (λ ([line : String]) (or (blank? line) (heading? line)))))
+  (string-join (map string-trim (takef body (λ ([line : String]) (not (or (blank? line) (heading? line))))))))
+
+;; Where a verbatim copy of the pattern lives, relative to the handoff
+;; repository, which shares it between arcs.
+(: workflow-copy-name (-> String String))
+(define (workflow-copy-name name)
+  (string-append "workflow-" name ".md"))
+
+;; The line opening a verbatim copy of pattern `name` with contents `text`. The
+;; hash says whether the copy was amended since, and whether the pattern has
+;; changed since.
+(: workflow-provenance (-> String String String String))
+(define (workflow-provenance name text date)
+  (format "<!-- copied from workflow pattern ~a (sha256:~a) on ~a; verbatim -->\n"
+          name (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text))) date))
+
+(: new-arc-files (-> String (U scope-path #f) (Listof (Pairof String String))))
+(define (new-arc-files name workflow)
+  (list*
+   (cons start-file
+         (format "next = ~a\nworkflow = ~a\nread_first = []\n"
+                 (toml-string "")
+                 (toml-string (if workflow (scope-path->string workflow) ""))))
+   (cons checks-file "")
+   (for/list : (Listof (Pairof String String)) ([file+heading (in-list state-headings)])
+     (cons (car file+heading) (format "# ~a\n" (or (cdr file+heading) name))))))

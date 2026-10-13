@@ -167,3 +167,20 @@
   (check-equal? (map check-change-before changes)
                 (list #f (third earlier) (second earlier) (first earlier)))
   (check-equal? removed (list (check-result-check (fourth earlier)))))
+
+;;; Workflow patterns
+
+(test-case "pattern names are lowercase file names"
+  (for ([name (in-list '("spike" "agent-implements" "v2"))])
+    (check-true (pattern-name? name) name))
+  (for ([name (in-list '("README" "-x" "" "a.b" "a b"))])
+    (check-false (pattern-name? name) name)))
+
+(test-case "a pattern's summary is its first paragraph after the headings"
+  (check-equal? (pattern-summary "# `spike`\n\nAn investigation\n  with a budget.\n\nMore.\n") "An investigation with a budget.")
+  (check-equal? (pattern-summary "\nNo heading.\n## Review\nNone.\n") "No heading.")
+  (check-equal? (pattern-summary "# Only a heading\n") ""))
+
+(test-case "a verbatim copy's provenance records the SHA-256 of the pattern in lowercase hexadecimal"
+  (check-equal? (workflow-provenance "solo" "abc" "2026-10-13")
+                "<!-- copied from workflow pattern solo (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13; verbatim -->\n"))

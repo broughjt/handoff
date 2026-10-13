@@ -64,8 +64,11 @@
 ;;; Command line
 
 (define-type Subcommand
-  (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand))
+  (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand
+     new-subcommand workflows-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
+(struct new-subcommand ([arc : String] [workflow : (U String #f)]) #:transparent)
+(struct workflows-subcommand () #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
@@ -87,6 +90,8 @@
    "  check  run the commands in checks.toml and report their results"
    "  lint   validate expected structure of a handoff arc"
    "  update record a log entry: --begin runs the checks and records them, --commit commits"
+   "  new    create an arc's files, copying its workflow pattern"
+   "  workflows list the workflow patterns"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -134,10 +139,29 @@
       #:args ([arc #f])
       (update-subcommand (or step (raise-handoff-error "update requires --begin or --commit"))
                       (and arc (assert arc string?))))]
-    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, or update" subcommand)]))
+    [("new")
+     (command-line
+      #:program program
+      #:argv arguments
+      #:help-labels
+      "<workflow> is a pattern name from handoff workflows, or a reference such as handoff:workflow-x.md"
+      #:args (arc [workflow #f])
+      (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
+    [("workflows")
+     (command-line #:program program #:argv arguments #:args () (workflows-subcommand))]
+    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, or workflows"
+                               subcommand)]))
 
 (: execute (-> invocation Status))
 (define (execute invocation)
+  (define subcommand (invocation-subcommand invocation))
+  (if (workflows-subcommand? subcommand)
+      ;; Listing user-scope patterns should not execute from the project repository.
+      (handle-workflows)
+      (execute-in-repository invocation)))
+
+(: execute-in-repository (-> invocation Status))
+(define (execute-in-repository invocation)
   (define option (invocation-repository invocation))
   (when (and option (not (git-repository? option)))
     (raise-handoff-error "~a is not a git repository" option))
@@ -156,7 +180,10 @@
      (define arc (select-arc repository (update-subcommand-arc subcommand)))
      (case (update-subcommand-step subcommand)
        [(begin) (handle-update-begin repository arc)]
-       [(commit) (handle-update-commit repository arc)])]))
+       [(commit) (handle-update-commit repository arc)])]
+    [(new-subcommand? subcommand)
+     (handle-new repository (new-subcommand-arc subcommand) (new-subcommand-workflow subcommand))]
+    [else (error 'execute "unhandled subcommand ~a" subcommand)]))
 
 ;;; Commands
 
@@ -422,6 +449,71 @@
       (printf "  ~a\n" line)))
   'success)
 
+;; Print each pattern as a record of labeled fields: its name, the file that
+;; provides it, the files it shadows, and its summary.
+(: handle-workflows (-> Status))
+(define (handle-workflows)
+  (define patterns (find-patterns))
+  (when (empty? patterns)
+    (printf "no workflow patterns in ~a\n" (string-join (map path->string (pattern-directories)) ", ")))
+  (for ([pattern (in-list patterns)] [index (in-naturals)])
+    (unless (zero? index) (newline))
+    (printf "name: ~a\n" (pattern-name pattern))
+    (printf "path: ~a\n" (pattern-path pattern))
+    (for ([shadowed (in-list (pattern-shadowed pattern))])
+      (printf "shadows: ~a\n" shadowed))
+    (printf "summary: ~a\n" (pattern-summary (file->string (pattern-path pattern)))))
+  'success)
+
+;; Stubs out a new handoff arc. Creates each of the expected files with minimal
+;; content and without committing them. Takes an optional name or reference to a
+;; `workflow` and copies it. The generated arc will fail `handoff lint` until
+;; `next` in start.toml is written (and the workflow pattern is written if one
+;; was not passed).
+(: handle-new (-> Path String (U String #f) Status))
+(define (handle-new repository arc workflow)
+  (check-arc-name arc)
+  (define arc-path (build-path repository arc))
+  (when (or (file-exists? arc-path) (directory-exists? arc-path) (link-exists? arc-path))
+    (raise-handoff-error "~a already exists in ~a" arc repository))
+  (define project (find-project-repository repository))
+  (define-values (reference copy)
+    (cond
+      [(not workflow) (values #f #f)]
+      [(regexp-match? #rx":" workflow)
+       (define reference (parse-scope-path workflow))
+       (define path (resolve-scope-path reference #:arc arc-path #:repository repository #:project project))
+       (unless (file-exists? path)
+         (raise-handoff-error "~a: expected a regular file at ~a" workflow path))
+       (values reference #f)]
+      [else
+       (define found
+         (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) workflow)) (find-patterns))
+             (raise-handoff-error "no workflow pattern named ~a; see handoff workflows" workflow)))
+       (define file (workflow-copy-name workflow))
+       (values (scope-path 'handoff (string->path file))
+               (and (not (file-exists? (build-path repository file))) found))]))
+
+  (when copy
+    (define text (file->string (pattern-path copy)))
+    (display-to-file (string-append (workflow-provenance (pattern-name copy) text (date->string (current-seconds)))
+                                    text)
+                     (build-path repository (workflow-copy-name (pattern-name copy)))
+                     #:exists 'error))
+  (make-directory arc-path)
+  (for ([file+contents (in-list (new-arc-files arc reference))])
+    (display-to-file (cdr file+contents) (build-path arc-path (car file+contents)) #:exists 'error))
+
+  (printf "created ~a/ with ~a\n" arc (string-join (map (inst car String String) (new-arc-files arc reference)) ", "))
+  (when reference
+    (printf "workflow: ~a ~a\n" (scope-path->string reference)
+            (if copy (format "(copied from ~a)" (pattern-path copy)) "(existing)")))
+  (define diagnostics (lint-arc arc-path repository))
+  (printf "lint, until the arc is written:\n")
+  (for ([diagnostic (in-list diagnostics)])
+    (printf "  ~a\n" (diagnostic->string diagnostic)))
+  'success)
+
 (: refuse-lint-errors (-> Path String Void))
 (define (refuse-lint-errors repository arc)
   (define diagnostics (lint-arc (build-path repository arc) repository))
@@ -675,6 +767,49 @@
   (branch-head (line (git* project "symbolic-ref" "--quiet" "--short" "HEAD"))
                (line (git* project "rev-parse" "--verify" "--quiet" "HEAD"))))
 
+;;; Workflow patterns
+
+(: pattern-directories (-> (Listof Path)))
+(define (pattern-directories)
+  ;; The XDG Base Directory specification ignores relative paths.
+  (define (absolute [text : (U String #f)])
+    (and text (non-empty-string? text) (absolute-path? text) (string->path text)))
+  (define config
+    (or (absolute (getenv "XDG_CONFIG_HOME"))
+        (build-path (find-system-path 'home-dir) ".config")))
+  (define data-dirs
+    (filter-map absolute
+                (string-split
+                 (let ([value (getenv "XDG_DATA_DIRS")])
+                   (if (and value (non-empty-string? value))
+                       value
+                       "/usr/local/share:/usr/share"))
+                 ":")))
+  (for/list ([base (in-list (cons config data-dirs))])
+    (build-path base "handoff" "workflows")))
+
+(: find-patterns (-> (Listof pattern)))
+(define (find-patterns)
+  (define found : (HashTable String pattern) (make-hash))
+  (define order : (Listof String) null)
+  (for* ([directory (in-list (pattern-directories))]
+         #:when (directory-exists? directory)
+         [file (in-list (map path->string (directory-list directory)))])
+    (define name (regexp-match #px"^(.*)\\.md$" file))
+    (define path (build-path directory file))
+    (when (and name (pattern-name? (assert (second name))) (file-exists? path))
+      (define key (assert (second name)))
+      (define earlier (hash-ref found key #f))
+      (cond
+        [earlier
+         (hash-set! found key (struct-copy pattern earlier
+                                           [shadowed (append (pattern-shadowed earlier) (list path))]))]
+        [else
+         (hash-set! found key (pattern key path null))
+         (set! order (cons key order))])))
+  (for/list ([key (in-list (sort order string<?))])
+    (hash-ref found key)))
+
 ;; An arc is a top-level directory containing a start file.
 (: arc? (-> Path Boolean))
 (define (arc? path)
@@ -694,12 +829,16 @@
           (string-trim tag archive-tag-prefix #:right? #f))
         string<?))
 
+(: check-arc-name (-> String Void))
+(define (check-arc-name name)
+  (when (or (member name '("" "." ".." ".git")) (regexp-match? #rx"/" name))
+    (raise-handoff-error "specify a top-level arc directory name")))
+
 (: select-arc (-> Path (U String #f) String))
 (define (select-arc repository name)
   (cond
     [name
-     (when (or (member name '("" "." ".." ".git")) (regexp-match? #rx"/" name))
-       (raise-handoff-error "specify a top-level arc directory name"))
+     (check-arc-name name)
      (unless (directory-exists? (build-path repository name))
        (raise-handoff-error "~a is not a directory in ~a" name repository))
      name]

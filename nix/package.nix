@@ -15,7 +15,10 @@ stdenvNoCC.mkDerivation {
 
   src = lib.fileset.toSource {
     root = ../.;
-    fileset = ../handoff;
+    fileset = lib.fileset.unions [
+      ../handoff
+      ../workflows
+    ];
   };
 
   nativeBuildInputs = [
@@ -46,16 +49,22 @@ stdenvNoCC.mkDerivation {
     runHook postCheck
   '';
 
-  # The script calls git commands and runs user checks under bash
+  # The script calls git commands and runs user checks under bash. It finds
+  # workflow patterns in each $XDG_DATA_DIRS/handoff/workflows/, after the
+  # user's own, so the wrapper puts the default patterns first among those.
   installPhase = ''
     runHook preInstall
     cp -r dist $out
-    wrapProgram $out/bin/handoff --prefix PATH : ${
-      lib.makeBinPath [
-        bash
-        git
-      ]
-    }
+    mkdir -p $out/share/handoff
+    cp -r workflows $out/share/handoff/workflows
+    wrapProgram $out/bin/handoff \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          bash
+          git
+        ]
+      } \
+      --prefix XDG_DATA_DIRS : $out/share
     runHook postInstall
   '';
 
@@ -84,6 +93,7 @@ stdenvNoCC.mkDerivation {
     touch $repository/arc/start.toml
     printf '[[check]]\nid = "x"\nclaim = "holds"\nrun = "true"\n' > $repository/arc/checks.toml
     $out/bin/handoff --repository $repository check
+    $out/bin/handoff workflows | grep -qx 'name: agent-implements'
     runHook postInstallCheck
   '';
 
