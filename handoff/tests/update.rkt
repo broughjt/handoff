@@ -56,7 +56,7 @@ TOML
      (check-equal? (outcome-code begun) 0 (outcome-stderr begun))
      (check-equal? (outcome-stderr begun) "")
      (define entry-path (build-path arc "log" "1"))
-     (check-regexp-match #px"no\\s+does not hold\\s+false" (outcome-stdout begun))
+     (check-true (string-contains? (outcome-stdout begun) "id: no\nclaim: does not hold\noutcome: false\nexit: 1\n"))
      (check-true (string-suffix?
                   (outcome-stdout begun)
                   (format "\nlog/1 results recorded. Write the entry to ~a, then run handoff update --commit arc\n"

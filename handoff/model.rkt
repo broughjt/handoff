@@ -40,6 +40,7 @@
          (struct-out check-result)
          (struct-out branch-head)
          (struct-out check-run)
+         (struct-out baseline)
          Outcome
          default-timeout
          parse-checks
@@ -201,6 +202,10 @@
 ;; The branch head, consisting of the branch name (`#f` when detached) and its
 ;; latest commit (`#f` before first commit).
 (struct branch-head ([branch : (U String #f)] [head : (U String #f)]) #:transparent)
+
+;; The baseline is the log entry that `handoff start` compares against, that is,
+;; the highest-numbered entry that is not pending.
+(struct baseline ([number : Exact-Positive-Integer] [run : (U check-run String)]) #:transparent)
 
 ;; Checks are an array of tables so that they run in file order.
 (: parse-checks (-> Table (Listof check)))

@@ -57,24 +57,45 @@
   (for ([needle (in-list needles)])
     (check-false (string-contains? output needle) (format "~s in:\n~a" needle output))))
 
-(test-case "with no log, start runs the checks and inlines the arc"
+(define (check-order [output : String] . [needles : String *])
+  (define positions
+    (for/list : (Listof (U Natural #f)) ([needle (in-list needles)])
+      (define match (regexp-match-positions (regexp-quote needle) output))
+      (and match (car (car match)))))
+  (check-true (andmap exact-nonnegative-integer? positions) (format "~s missing from:\n~a" needles output))
+  (check-equal? (sort (cast positions (Listof Natural)) <) positions output))
+
+(test-case "with no log, start inlines the arc, then reports status and checks"
   (call-with-start-arc
    (λ ([repository : Path] [arc : Path] [project : Path])
      (define output (start! repository))
-     (check-true (string-prefix? output "==> handoff start <==\narc: arc\n") output)
-     (check-contains output
-                     "no earlier log entry to compare against\n"
-                     "marker  the marker exists  false"
-                     "           no marker\n"
-                     "==> start <==\nNext:\n  Continue\nWorkflow: .scratch/handoff/shared.md\nRead first:\n  nothing\n"
-                     "\n==> .scratch/handoff/shared.md <==\nworkflow\n\n"
-                     "==> .scratch/handoff/arc/arc.md <==\n# The arc\n\nWhy it exists.\n"
-                     "==> .scratch/handoff/arc/tasks.md <==\n- [ ] Measure\n"
-                     "==> .scratch/handoff/arc/review.md <==\n"
-                     "==> handoff repository <==\nno uncommitted changes\n")
-     (check-lacks output "==> lint <==" "==> pending log entry <==" "at log/"))))
+     (check-true (string-prefix? output "==> start, from .scratch/handoff/arc/start.toml <==\nNext:\n  Continue\nWorkflow: .scratch/handoff/shared.md\nRead first:\n  nothing\n\n")
+                 output)
+     (check-order output
+                  "==> start, from "
+                  "==> .scratch/handoff/arc/arc.md <==\n# The arc\n\nWhy it exists.\n\n"
+                  "==> .scratch/handoff/shared.md <==\nworkflow\n\n"
+                  "==> .scratch/handoff/arc/tasks.md <==\n- [ ] Measure\n\n"
+                  "==> .scratch/handoff/arc/do-not-reopen.md <==\n\n"
+                  "==> .scratch/handoff/arc/open-questions.md <==\n\n"
+                  "==> .scratch/handoff/arc/review.md <==\n\n"
+                  (format "==> project repository status <==\nrepository: ~a\npaths above are relative to it\nnow: "
+                          (string-trim (path->string project) "/" #:left? #f))
+                  "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\npending: none\nuncommitted: none\n\n"
+                  "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
+                  "outcome: false\nexit: 1\n"
+                  "output:\n  no marker\n"
+                  "summary: 1 true, 1 false (marker)\n")
+     (check-lacks output "at log/" "entry.md"))))
 
-(test-case "lint diagnostics come first, and whatever parses is still rendered"
+(test-case "a multiline next renders without a trailing blank line"
+  (call-with-start-arc
+   (λ ([repository : Path] [arc : Path] [project : Path])
+     (write-file (build-path arc "start.toml")
+                 "next = \"\"\"\nFirst line.\n\nSecond paragraph.\n\"\"\"\nworkflow = \"handoff:shared.md\"\nread_first = []\n")
+     (check-contains (start! repository) "Next:\n  First line.\n  \n  Second paragraph.\nWorkflow: "))))
+
+(test-case "lint diagnostics are reported, and whatever parses is still rendered"
   (call-with-start-arc
    (λ ([repository : Path] [arc : Path] [project : Path])
      (delete-file (build-path arc "review.md"))
@@ -82,7 +103,7 @@
                  "next = \"Go\"\nworkflow = \"arc:missing.md\"\nread_first = [{ path = \"project:gone.rkt\", reason = \"Entry\" }]\n")
      (define output (start! repository))
      (check-contains output
-                     "==> lint <==\n.scratch/handoff/arc/review.md: expected a regular file\n"
+                     "lint: 3 errors\n  .scratch/handoff/arc/review.md: expected a regular file\n"
                      "Workflow: .scratch/handoff/arc/missing.md (missing)\n"
                      "- gone.rkt (missing): Entry\n"
                      "==> .scratch/handoff/arc/tasks.md <==")
@@ -90,8 +111,12 @@
      (write-file (build-path arc "start.toml") "next = \n")
      (write-file (build-path arc "checks.toml") "[[check]]\n")
      (define broken (start! repository))
-     (check-contains broken "start.toml: " "not run: checks.toml: " "==> .scratch/handoff/arc/arc.md <==")
-     (check-lacks broken "==> start <==" "RESULT"))))
+     (check-contains broken
+                     "==> start, from .scratch/handoff/arc/start.toml <==\nstart.toml did not parse"
+                     "  .scratch/handoff/arc/start.toml: "
+                     "not run: checks.toml: "
+                     "==> .scratch/handoff/arc/arc.md <==")
+     (check-lacks broken "Next:" "id: " "shared.md <=="))))
 
 (test-case "start compares the checks against the latest log entry"
   (call-with-start-arc
@@ -107,10 +132,11 @@
      (define output (start! repository))
      (check-regexp-match #px"compared against log/1, recorded on \\S+ at \\d{4}-\\d\\d-\\d\\dT" output)
      (check-contains output
-                     "         was true at log/1\n         exit 1\n         output:\n           no marker\n"
-                     "         definition changed since log/1, where it was true\n"
-                     "         new since log/1\n"
-                     "removed since log/1: gone (will be removed)\n"
+                     "id: marker\nclaim: the marker exists\noutcome: false\nchange: was true at log/1\nexit: 1\nduration: "
+                     "output:\n  no marker\n"
+                     "id: steady\nclaim: always holds\noutcome: true\nchange: definition changed since log/1, where it was true\n"
+                     "id: fresh\nclaim: is new\noutcome: true\nchange: new since log/1\n"
+                     "\n\nremoved since log/1: gone (will be removed)\n\nhost: "
                      "==> .scratch/handoff/arc/log/1/entry.md <==\n# First\n\nNarrative 1.\n"
                      "   M arc/checks.toml\n"))))
 
@@ -120,7 +146,8 @@
      (record! repository arc "Without the marker")
      (write-file (build-path project "marker") "")
      (check-contains (start! repository)
-                     "         was false at log/1\n         output at log/1:\n           no marker\n"))))
+                     "outcome: true\nchange: was false at log/1\nduration: "
+                     "output at log/1:\n  no marker\n"))))
 
 (test-case "a pending entry is reported and is not the baseline"
   (call-with-start-arc
@@ -128,7 +155,7 @@
      (record! repository arc "First")
      (check-equal? (outcome-code (handoff* repository "update" "--begin")) 0)
      (define output (start! repository))
-     (check-regexp-match #px"==> pending log entry <==\nlog/2 [^\n]*not the baseline\nresults: recorded on \\S+ at [^\n]+\nentry.md: not written\n"
+     (check-regexp-match #px"\npending: log/2 [^\n]*not the baseline\n  results: recorded on \\S+ at [^\n]+\n  entry.md: not written\n"
                          output)
      (check-contains output "compared against log/1" "==> .scratch/handoff/arc/log/1/entry.md <==")
      (check-lacks output "log/2/entry.md"))))
@@ -146,7 +173,7 @@
                      "not compared: log/2/results.toml: "
                      "==> .scratch/handoff/arc/log/2/entry.md <==\n# Second\n")
      (check-lacks output "compared against log/1" "log/1/entry.md" "at log/")
-     (check-regexp-match #px"==> project <==\nnow: [^\n]+\n\n" output))))
+     (check-regexp-match #px"==> project repository status <==\n[^\n]+\n[^\n]+\nnow: [^\n]+\n\n" output))))
 
 (test-case "start reports what happened to the project since the latest entry"
   (call-with-start-arc
@@ -154,7 +181,7 @@
      (record! repository arc "First")
      (check-contains (start! repository) "no new commits\n")
      (run-git project "commit" "--allow-empty" "-qm" "Later work")
-     (check-regexp-match #px"commits since:\n  > [0-9a-f]{12} Later work\n" (start! repository))
+     (check-regexp-match #px"commits since:\n  [0-9a-f]{12} Later work\n" (start! repository))
      (run-git project "commit" "--amend" "--allow-empty" "-qm" "Rewritten work")
      (record! repository arc "Second")
      (run-git project "reset" "-q" "--hard" "HEAD~1")
@@ -169,4 +196,4 @@
      (define results (build-path arc "log" "2" "results.toml"))
      (write-file results (regexp-replace #px"head = \"[0-9a-f]+\"" (file->string results)
                                          "head = \"0123456789abcdef0123456789abcdef01234567\""))
-     (check-contains (start! repository) "the recorded head does not resolve here"))))
+     (check-contains (start! repository) "recorded head does not resolve here"))))

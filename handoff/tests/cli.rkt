@@ -61,12 +61,12 @@ TOML
          (define result (handoff* repository "check"))
          (define stdout (outcome-stdout result))
          (check-equal? (outcome-code result) 1 (outcome-stderr result))
-         (check-equal? (string-split (first (lines stdout))) '("ID" "CLAIM" "RESULT" "DURATION"))
-         (check-regexp-match #px"yes\\s+holds\\s+true\\s+\\d+\\.\\ds" stdout)
+         (check-regexp-match #px"^id: yes\nclaim: holds\noutcome: true\nduration: \\d+\\.\\ds\n\nid: no\n" stdout)
          (check-regexp-match
-          #px"^host: .+, duration: \\d+\\.\\ds, summary: 1 true, 1 false, 1 unknown, 1 timeout$"
+          #px"^host: .+, duration: \\d+\\.\\ds, summary: 1 true, 1 false \\(no\\), 1 unknown \\(unknown\\), 1 timeout \\(slow\\)$"
           (last (lines stdout)))
-         (for ([expected (in-list '("failed" "unavailable" "waiting" "exit 1" "exit 3" "after 0.1s"))])
+         (for ([expected (in-list '("output:\n  failed\n" "exit: 1\n" "exit: 3\n" "timeout: 0.1s\n"
+                                    "output:\n  unavailable\n" "output:\n  waiting\n"))])
            (check-true (string-contains? stdout expected) expected))
          (for ([absent (in-list '("hidden" "before:" "previous"))])
            (check-false (string-contains? stdout absent) absent))
@@ -98,8 +98,10 @@ TOML
      (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"fails\"\nrun = \"seq 1 100; exit 1\"\n")
      (define result (handoff* repository "check"))
      (check-equal? (outcome-code result) 1)
-     (check-equal? (for/list : (Listof String) ([line (in-list (lines (outcome-stdout result)))]
-                                                #:when (string-prefix? line "           "))
+     (define stdout (outcome-stdout result))
+     (check-true (string-contains? stdout "output (last 20 of 100 lines):\n") stdout)
+     (check-equal? (for/list : (Listof String) ([line (in-list (lines stdout))]
+                                                #:when (string-prefix? line "  "))
                      (string-trim line))
                    (for/list : (Listof String) ([n (in-range 81 101)]) (number->string n))))))
 
