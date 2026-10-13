@@ -1,5 +1,5 @@
 #lang typed/racket/base
-;; Listing workflow patterns and creating arcs with new.
+;; Creating arcs with new, and listing, installing and forking workflows.
 
 (require racket/file
          racket/list
@@ -24,9 +24,9 @@
 
 (define pattern-text "# `solo`\n\nThe agent works\nalone.\n\n## Review\n\nNone.\n")
 
-;;; workflows
+;;; workflow list
 
-(test-case "workflows lists the user's patterns before installed ones, which they shadow"
+(test-case "workflow list lists the user's patterns before installed ones, which they shadow"
   (call-with-repository
    (λ ([repository : Path])
      (define-values (config data) (use-pattern-directories (build-path repository 'up 'up)))
@@ -37,18 +37,18 @@
      (write-file (build-path config "notes.txt") "not a pattern")
      ;; Patterns belong to the user, so no repository is needed.
      (define elsewhere (make-temporary-file "handoff-test-~a" 'directory))
-     (define result (handoff elsewhere "workflows"))
+     (define result (handoff elsewhere "workflow" "list"))
      (delete-directory/files elsewhere)
      (check-equal? (outcome-code result) 0 (outcome-stderr result))
      (check-equal? (outcome-stdout result)
                    (format "name: pair\npath: ~a\nsummary: Two agents.\n\nname: solo\npath: ~a\nshadows: ~a\nsummary: My own.\n"
                            (build-path data "pair.md") (build-path config "solo.md") (build-path data "solo.md"))))))
 
-(test-case "workflows with no patterns says where it looked"
+(test-case "workflow list with no patterns says where it looked"
   (call-with-repository
    (λ ([repository : Path])
      (define-values (config _data) (use-pattern-directories (build-path repository 'up 'up)))
-     (define result (handoff* repository "workflows"))
+     (define result (handoff* repository "workflow" "list"))
      (check-equal? (outcome-code result) 0)
      (check-true (string-contains? (outcome-stdout result) (path->string config))))))
 
@@ -118,3 +118,73 @@
        (check-equal? (outcome-stdout result) "")
        (check-equal? (snapshot repository) before)
        (check-false (directory-exists? (build-path repository "fresh")))))))
+
+;;; workflow install
+
+(test-case "workflow install copies a pattern once, as new does"
+  (call-with-repository
+   (λ ([repository : Path])
+     (define-values (_config data) (use-pattern-directories (build-path repository 'up 'up)))
+     (write-file (build-path data "solo.md") pattern-text)
+     (define first (handoff* repository "workflow" "install" "solo"))
+     (check-equal? (outcome-code first) 0 (outcome-stderr first))
+     (check-equal? (outcome-stdout first)
+                   (format "installed handoff:workflow-solo.md, copied from ~a\n" (build-path data "solo.md")))
+     (define copy (file->string (build-path repository "workflow-solo.md")))
+     (check-true (string-prefix? copy "<!-- copied from workflow pattern solo (sha256:"))
+     (check-true (string-suffix? copy pattern-text))
+     (write-file (build-path data "solo.md") "changed")
+     (define second (handoff* repository "workflow" "install" "solo"))
+     (check-equal? (outcome-code second) 0)
+     (check-equal? (outcome-stdout second) "handoff:workflow-solo.md already exists and was not modified\n")
+     (check-equal? (file->string (build-path repository "workflow-solo.md")) copy)
+     (check-equal? (outcome-code (handoff* repository "workflow" "install" "absent")) 2))))
+
+;;; workflow fork
+
+(define (fork! [repository : Path] [arc : String] [name : String])
+  (define result (handoff* repository "workflow" "fork" arc name))
+  (check-equal? (outcome-code result) 0 (outcome-stderr result))
+  (outcome-stdout result))
+
+(define (sha256-hex [text : String])
+  (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text))))
+
+(test-case "workflow fork copies the arc's workflow into it, recording the immediate source"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (define shared "<!-- copied from workflow pattern shared (sha256:00) on 2026-10-01; verbatim -->\n# Shared\n\nRules.\n")
+     (write-file (build-path repository "shared.md") shared)
+     (define start (file->string (build-path arc "start.toml")))
+     (check-equal? (fork! repository "arc" "mine")
+                   "forked arc:workflow-mine.md from handoff:shared.md\nto use it, set workflow in start.toml to \"arc:workflow-mine.md\"\n")
+     (define fork (file->string (build-path arc "workflow-mine.md")))
+     (check-regexp-match
+      (pregexp (format "^<!-- forked from handoff:shared\\.md \\(sha256:~a\\) on \\d{4}-\\d{2}-\\d{2} -->\n# Shared\n\nRules\\.\n$"
+                       (sha256-hex shared)))
+      fork)
+     ;; start.toml is the agent's to change.
+     (check-equal? (file->string (build-path arc "start.toml")) start)
+     ;; A fork of a fork names the fork it came from.
+     (write-file (build-path arc "start.toml")
+                 "next = \"Continue\"\nworkflow = \"arc:workflow-mine.md\"\nread_first = []\n")
+     (fork! repository "arc" "again")
+     (check-regexp-match
+      (pregexp (format "^<!-- forked from arc:workflow-mine\\.md \\(sha256:~a\\) on \\d{4}-\\d{2}-\\d{2} -->\n# Shared\n\nRules\\.\n$"
+                       (sha256-hex fork)))
+      (file->string (build-path arc "workflow-again.md"))))))
+
+(test-case "workflow fork refuses, writing nothing"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (write-file (build-path arc "workflow-taken.md") "taken")
+     (define before (snapshot repository))
+     (for ([arguments (in-list '(("arc" "Bad Name") ("arc" "taken") ("absent" "fine")))])
+       (define result (apply handoff* repository "workflow" "fork" arguments))
+       (check-equal? (outcome-code result) 2 (format "~a" arguments))
+       (check-equal? (snapshot repository) before))
+     (write-file (build-path arc "start.toml") "next = \"Continue\"\nworkflow = \"handoff:missing.md\"\nread_first = []\n")
+     (check-equal? (outcome-code (handoff* repository "workflow" "fork" "arc" "fine")) 2)
+     (write-file (build-path arc "start.toml") "not toml")
+     (check-equal? (outcome-code (handoff* repository "workflow" "fork" "arc" "fine")) 2)
+     (check-false (file-exists? (build-path arc "workflow-fine.md"))))))

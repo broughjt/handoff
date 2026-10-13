@@ -93,7 +93,7 @@ stdenvNoCC.mkDerivation {
     touch $repository/arc/start.toml
     printf '[[check]]\nid = "x"\nclaim = "holds"\nrun = "true"\n' > $repository/arc/checks.toml
     $out/bin/handoff --repository $repository check
-    $out/bin/handoff workflows | grep -qx 'name: agent-implements'
+    $out/bin/handoff workflow list | grep -qx 'name: agent-implements'
     runHook postInstallCheck
   '';
 

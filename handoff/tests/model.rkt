@@ -182,5 +182,15 @@
   (check-equal? (pattern-summary "# Only a heading\n") ""))
 
 (test-case "a verbatim copy's provenance records the SHA-256 of the pattern in lowercase hexadecimal"
-  (check-equal? (workflow-provenance "solo" "abc" "2026-10-13")
+  (check-equal? (workflow-provenance 'copied "solo" "abc" "2026-10-13")
                 "<!-- copied from workflow pattern solo (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13; verbatim -->\n"))
+
+(test-case "a fork's provenance names its source reference"
+  (check-equal? (workflow-provenance 'forked "arc:workflow-a.md" "abc" "2026-10-13")
+                "<!-- forked from arc:workflow-a.md (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13 -->\n"))
+
+(test-case "only an opening provenance line is stripped"
+  (for ([how (in-list '("copied from x" "forked from y" "coined for this arc on z"))])
+    (check-equal? (strip-provenance (format "<!-- ~a -->\n# W\n" how)) "# W\n" how))
+  (for ([text (in-list '("# W\n" "<!-- a note -->\n# W\n" "# W\n<!-- copied from x -->\n"))])
+    (check-equal? (strip-provenance text) text text)))

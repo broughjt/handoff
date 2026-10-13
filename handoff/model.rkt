@@ -56,6 +56,7 @@
          pattern-summary
          workflow-copy-name
          workflow-provenance
+         strip-provenance
          new-arc-files)
 
 ;;; Layout
@@ -420,13 +421,24 @@
 (define (workflow-copy-name name)
   (string-append "workflow-" name ".md"))
 
-;; The line opening a verbatim copy of pattern `name` with contents `text`. The
-;; hash says whether the copy was amended since, and whether the pattern has
-;; changed since.
-(: workflow-provenance (-> String String String String))
-(define (workflow-provenance name text date)
-  (format "<!-- copied from workflow pattern ~a (sha256:~a) on ~a; verbatim -->\n"
-          name (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text))) date))
+;; The line opening a workflow copied verbatim from pattern `source`, or forked
+;; from the file `source` refers to, when that file's contents were `text`. The
+;; hash says whether the source has changed since; for a verbatim copy, also
+;; whether the copy was amended.
+(: workflow-provenance (-> (U 'copied 'forked) String String String String))
+(define (workflow-provenance how source text date)
+  (format "<!-- ~a from ~a~a (sha256:~a) on ~a~a -->\n"
+          how
+          (if (eq? how 'copied) "workflow pattern " "")
+          source
+          (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text)))
+          date
+          (if (eq? how 'copied) "; verbatim" "")))
+
+;; A workflow's text without its opening provenance line, if it has one.
+(: strip-provenance (-> String String))
+(define (strip-provenance text)
+  (regexp-replace #px"^<!-- (copied|forked|coined) [^\n]*-->\n" text ""))
 
 (: new-arc-files (-> String (U scope-path #f) (Listof (Pairof String String))))
 (define (new-arc-files name workflow)

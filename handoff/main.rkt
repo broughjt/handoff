@@ -65,10 +65,12 @@
 
 (define-type Subcommand
   (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand
-     new-subcommand workflows-subcommand))
+     new-subcommand workflow-list-subcommand workflow-install-subcommand workflow-fork-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
 (struct new-subcommand ([arc : String] [workflow : (U String #f)]) #:transparent)
-(struct workflows-subcommand () #:transparent)
+(struct workflow-list-subcommand () #:transparent)
+(struct workflow-install-subcommand ([pattern : String]) #:transparent)
+(struct workflow-fork-subcommand ([arc : String] [name : String]) #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
@@ -91,7 +93,7 @@
    "  lint   validate expected structure of a handoff arc"
    "  update record a log entry: --begin runs the checks and records them, --commit commits"
    "  new    create an arc's files, copying its workflow pattern"
-   "  workflows list the workflow patterns"
+   "  workflow list|install|fork  list workflow patterns, copy one, or fork an arc's workflow"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -144,20 +146,43 @@
       #:program program
       #:argv arguments
       #:help-labels
-      "<workflow> is a pattern name from handoff workflows, or a reference such as handoff:workflow-x.md"
+      "<workflow> is a pattern name from handoff workflow list, or a reference such as handoff:workflow-x.md"
       #:args (arc [workflow #f])
       (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
-    [("workflows")
-     (command-line #:program program #:argv arguments #:args () (workflows-subcommand))]
-    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, or workflows"
+    [("workflow")
+     (command-line
+      #:program program
+      #:argv arguments
+      #:usage-help
+      "Commands:"
+      "  list                 list the workflow patterns"
+      "  install <pattern>    copy a pattern verbatim to the handoff repository's root"
+      "  fork <arc> <name>    copy the arc's workflow into the arc as workflow-<name>.md"
+      #:args (verb . verb-arguments)
+      (parse-workflow-subcommand (assert verb string?)
+                                 (map (λ (a) (assert a string?)) verb-arguments)))]
+    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, or workflow"
                                subcommand)]))
+
+(: parse-workflow-subcommand (-> String (Listof String) Subcommand))
+(define (parse-workflow-subcommand verb arguments)
+  (define program (string-append "handoff workflow " verb))
+  (case verb
+    [("list") (command-line #:program program #:argv arguments #:args () (workflow-list-subcommand))]
+    [("install")
+     (command-line #:program program #:argv arguments #:args (pattern)
+                   (workflow-install-subcommand (assert pattern string?)))]
+    [("fork")
+     (command-line #:program program #:argv arguments #:args (arc name)
+                   (workflow-fork-subcommand (assert arc string?) (assert name string?)))]
+    [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
 
 (: execute (-> invocation Status))
 (define (execute invocation)
   (define subcommand (invocation-subcommand invocation))
-  (if (workflows-subcommand? subcommand)
+  (if (workflow-list-subcommand? subcommand)
       ;; Listing user-scope patterns should not execute from the project repository.
-      (handle-workflows)
+      (handle-workflow-list)
       (execute-in-repository invocation)))
 
 (: execute-in-repository (-> invocation Status))
@@ -183,6 +208,12 @@
        [(commit) (handle-update-commit repository arc)])]
     [(new-subcommand? subcommand)
      (handle-new repository (new-subcommand-arc subcommand) (new-subcommand-workflow subcommand))]
+    [(workflow-install-subcommand? subcommand)
+     (handle-workflow-install repository (workflow-install-subcommand-pattern subcommand))]
+    [(workflow-fork-subcommand? subcommand)
+     (handle-workflow-fork repository
+                           (select-arc repository (workflow-fork-subcommand-arc subcommand))
+                           (workflow-fork-subcommand-name subcommand))]
     [else (error 'execute "unhandled subcommand ~a" subcommand)]))
 
 ;;; Commands
@@ -459,8 +490,8 @@
 
 ;; Print each pattern as a record of labeled fields: its name, the file that
 ;; provides it, the files it shadows, and its summary.
-(: handle-workflows (-> Status))
-(define (handle-workflows)
+(: handle-workflow-list (-> Status))
+(define (handle-workflow-list)
   (define patterns (find-patterns))
   (when (empty? patterns)
     (printf "no workflow patterns in ~a\n" (string-join (map path->string (pattern-directories)) ", ")))
@@ -485,7 +516,8 @@
   (when (or (file-exists? arc-path) (directory-exists? arc-path) (link-exists? arc-path))
     (raise-handoff-error "~a already exists in ~a" arc repository))
   (define project (find-project-repository repository))
-  (define-values (reference copy)
+  ;; Everything is validated before anything is written.
+  (define-values (reference found)
     (cond
       [(not workflow) (values #f #f)]
       [(regexp-match? #rx":" workflow)
@@ -495,31 +527,67 @@
          (raise-handoff-error "~a: expected a regular file at ~a" workflow path))
        (values reference #f)]
       [else
-       (define found
-         (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) workflow)) (find-patterns))
-             (raise-handoff-error "no workflow pattern named ~a; see handoff workflows" workflow)))
-       (define file (workflow-copy-name workflow))
-       (values (scope-path 'handoff (string->path file))
-               (and (not (file-exists? (build-path repository file))) found))]))
-
-  (when copy
-    (define text (file->string (pattern-path copy)))
-    (display-to-file (string-append (workflow-provenance (pattern-name copy) text (date->string (current-seconds)))
-                                    text)
-                     (build-path repository (workflow-copy-name (pattern-name copy)))
-                     #:exists 'error))
+       (define found (find-pattern workflow))
+       (values (scope-path 'handoff (string->path (workflow-copy-name workflow))) found)]))
+  (define copied (and found (install-pattern repository found)))
   (make-directory arc-path)
   (for ([file+contents (in-list (new-arc-files arc reference))])
     (display-to-file (cdr file+contents) (build-path arc-path (car file+contents)) #:exists 'error))
 
   (printf "created ~a/ with ~a\n" arc (string-join (map (inst car String String) (new-arc-files arc reference)) ", "))
   (when reference
-    (printf "workflow: ~a ~a\n" (scope-path->string reference)
-            (if copy (format "(copied from ~a)" (pattern-path copy)) "(existing)")))
+    (printf "workflow: ~a~a\n" (scope-path->string reference)
+            (cond [copied (format " (copied from ~a)" copied)]
+                  [found " (existing)"]
+                  [else ""])))
   (define diagnostics (lint-arc arc-path repository))
   (printf "lint, until the arc is written:\n")
   (for ([diagnostic (in-list diagnostics)])
     (printf "  ~a\n" (diagnostic->string diagnostic)))
+  'success)
+
+(: handle-workflow-install (-> Path String Status))
+(define (handle-workflow-install repository name)
+  (define found (find-pattern name))
+  (define copied (install-pattern repository found))
+  (define reference (string-append "handoff:" (workflow-copy-name name)))
+  (if copied
+      (printf "installed ~a, copied from ~a\n" reference copied)
+      (printf "~a already exists and was not modified\n" reference))
+  'success)
+
+;; Copy the arc's current workflow into the arc under a new name, recording the
+;; reference it was forked from and that file's hash. Leaves start.toml for the
+;; agent to point at the fork.
+(: handle-workflow-fork (-> Path String String Status))
+(define (handle-workflow-fork repository arc name)
+  (unless (pattern-name? name)
+    (raise-handoff-error "~a: a workflow name is lowercase letters, digits and hyphens" name))
+  (define arc-path (build-path repository arc))
+  (define start-path (build-path arc-path start-file))
+  (define start*
+    (with-handlers ([exn:fail:handoff?
+                     (λ ([error : exn])
+                       (raise-handoff-error "~a: ~a" start-path (exn-message error)))])
+      (parse-start (read-toml start-path))))
+  (define source (start-workflow start*))
+  (define source-path
+    (resolve-scope-path source #:arc arc-path #:repository repository
+                        #:project (find-project-repository repository)))
+  (unless (file-exists? source-path)
+    (raise-handoff-error "~a: expected a regular file at ~a" (scope-path->string source) source-path))
+  (define file (workflow-copy-name name))
+  (define path (build-path arc-path file))
+  (when (or (file-exists? path) (directory-exists? path) (link-exists? path))
+    (raise-handoff-error "~a already exists" path))
+  (define text (file->string source-path))
+  (display-to-file (string-append (workflow-provenance 'forked (scope-path->string source) text
+                                                       (date->string (current-seconds)))
+                                  (strip-provenance text))
+                   path
+                   #:exists 'error)
+  (printf "forked arc:~a from ~a\nto use it, set workflow in ~a to \"arc:~a\"\n"
+          file (scope-path->string source) start-file file)
   'success)
 
 (: refuse-lint-errors (-> Path String Void))
@@ -817,6 +885,25 @@
          (set! order (cons key order))])))
   (for/list ([key (in-list (sort order string<?))])
     (hash-ref found key)))
+
+(: find-pattern (-> String pattern))
+(define (find-pattern name)
+  (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) name)) (find-patterns))
+      (raise-handoff-error "no workflow pattern named ~a; see handoff workflow list" name)))
+
+(: install-pattern (-> Path pattern (U Path #f)))
+(define (install-pattern repository pattern)
+  (define path (build-path repository (workflow-copy-name (pattern-name pattern))))
+  (cond
+    [(or (file-exists? path) (link-exists? path)) #f]
+    [else
+     (define text (file->string (pattern-path pattern)))
+     (display-to-file (string-append (workflow-provenance 'copied (pattern-name pattern) text
+                                                          (date->string (current-seconds)))
+                                     text)
+                      path
+                      #:exists 'error)
+     (pattern-path pattern)]))
 
 ;; An arc is a top-level directory containing a start file.
 (: arc? (-> Path Boolean))
