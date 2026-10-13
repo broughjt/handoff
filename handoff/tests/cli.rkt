@@ -63,7 +63,7 @@ TOML
          (check-equal? (outcome-code result) 1 (outcome-stderr result))
          (check-regexp-match #px"^id: yes\nclaim: holds\noutcome: true\nduration: \\d+\\.\\ds\n\nid: no\n" stdout)
          (check-regexp-match
-          #px"^host: .+, duration: \\d+\\.\\ds, summary: 1 true, 1 false \\(no\\), 1 unknown \\(unknown\\), 1 timeout \\(slow\\)$"
+          #px"^host: .+, duration: \\d+\\.\\ds, summary: 1 true, 1 false, 1 unknown, 1 timeout$"
           (last (lines stdout)))
          (for ([expected (in-list '("output:\n  failed\n" "exit: 1\n" "exit: 3\n" "timeout: 0.1s\n"
                                     "output:\n  unavailable\n" "output:\n  waiting\n"))])

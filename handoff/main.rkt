@@ -89,14 +89,14 @@
    #:argv argv
    #:usage-help
    "Commands:"
-   "  list   list handoff arcs"
-   "  start  get the brief for starting work on a handoff arc"
-   "  check  run the commands in checks.toml and report their results"
-   "  lint   validate expected structure of a handoff arc"
-   "  update record a log entry: --begin runs the checks and records them, --commit commits"
-   "  new    create an arc's files, copying its workflow pattern"
-   "  workflow list|install|fork  list workflow patterns, copy one, or fork an arc's workflow"
-   "  guide  print the path of HANDOFF.md, which documents concepts shared by the handoff skills"
+   "  list      list handoff arcs"
+   "  start     get the brief for starting work on a handoff arc"
+   "  check     run the commands in checks.toml and report their results"
+   "  lint      validate expected structure of a handoff arc"
+   "  update    record a log entry: --begin runs the checks and records them, --commit commits"
+   "  new       create an arc's files, copying its workflow pattern"
+   "  workflow  list, install, or fork workflow patterns"
+   "  guide     print the path of HANDOFF.md, which documents concepts shared by the handoff skills"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -283,7 +283,7 @@
   (define baseline (find-baseline arc-path))
 
   (define start-path (build-path arc-path start-file))
-  (section (format "start, from ~a" (show-path start-path)))
+  (section (format "start, generated from ~a" (show-path start-path)))
   (define start*
     (with-handlers ([exn:fail:handoff? (const #f)])
       (parse-start (read-toml start-path))))
@@ -668,13 +668,11 @@
       (printf "removed since log/~a: ~a (~a)\n" number (check-id check) (check-claim check))))
   (define counts
     (for*/list : (Listof String) ([outcome (in-list '(true false unknown timeout))]
-                                  [ids (in-value (for/list : (Listof String) ([result (in-list results)]
-                                                                              #:when (eq? (check-result-outcome result) outcome))
-                                                   (check-id (check-result-check result))))]
-                                  #:unless (empty? ids))
-      (if (eq? outcome 'true)
-          (format "~a true" (length ids))
-          (format "~a ~a (~a)" (length ids) outcome (string-join ids ", ")))))
+                                  [count (in-value (count (λ ([result : check-result])
+                                                            (eq? (check-result-outcome result) outcome))
+                                                          results))]
+                                  #:unless (zero? count))
+      (format "~a ~a" count outcome)))
   (unless (and (empty? results) (empty? removed))
     (newline))
   (printf "host: ~a, duration: ~a, summary: ~a\n"

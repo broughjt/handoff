@@ -69,10 +69,10 @@
   (call-with-start-arc
    (λ ([repository : Path] [arc : Path] [project : Path])
      (define output (start! repository))
-     (check-true (string-prefix? output "==> start, from .scratch/handoff/arc/start.toml <==\nNext:\n  Continue\nWorkflow: .scratch/handoff/shared.md\nRead first:\n  nothing\n\n")
+     (check-true (string-prefix? output "==> start, generated from .scratch/handoff/arc/start.toml <==\nNext:\n  Continue\nWorkflow: .scratch/handoff/shared.md\nRead first:\n  nothing\n\n")
                  output)
      (check-order output
-                  "==> start, from "
+                  "==> start, generated from "
                   "==> .scratch/handoff/arc/arc.md <==\n# The arc\n\nWhy it exists.\n\n"
                   "==> .scratch/handoff/shared.md <==\nworkflow\n\n"
                   "==> .scratch/handoff/arc/tasks.md <==\n- [ ] Measure\n\n"
@@ -85,7 +85,7 @@
                   "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
                   "outcome: false\nexit: 1\n"
                   "output:\n  no marker\n"
-                  "summary: 1 true, 1 false (marker)\n")
+                  "summary: 1 true, 1 false\n")
      (check-lacks output "at log/" "entry.md"))))
 
 (test-case "files beside the layout are listed by reference, not inlined"
@@ -121,7 +121,7 @@
      (write-file (build-path arc "checks.toml") "[[check]]\n")
      (define broken (start! repository))
      (check-contains broken
-                     "==> start, from .scratch/handoff/arc/start.toml <==\nstart.toml did not parse"
+                     "==> start, generated from .scratch/handoff/arc/start.toml <==\nstart.toml did not parse"
                      "  .scratch/handoff/arc/start.toml: "
                      "not run: checks.toml: "
                      "==> .scratch/handoff/arc/arc.md <==")
