@@ -81,12 +81,21 @@
                   "==> .scratch/handoff/arc/review.md <==\n\n"
                   (format "==> project repository status <==\nrepository: ~a\nnow: "
                           (string-trim (path->string project) "/" #:left? #f))
-                  "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\npending: none\nuncommitted: none\n\n"
+                  "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\nother arc files: none\npending log entry: none\nuncommitted: none\n\n"
                   "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
                   "outcome: false\nexit: 1\n"
                   "output:\n  no marker\n"
                   "summary: 1 true, 1 false (marker)\n")
      (check-lacks output "at log/" "entry.md"))))
+
+(test-case "files beside the layout are listed by reference, not inlined"
+  (call-with-start-arc
+   (λ ([repository : Path] [arc : Path] [project : Path])
+     (write-file (build-path arc "failures.md") "secret contents")
+     (write-file (build-path arc "notes" "a.md") "more")
+     (define output (start! repository))
+     (check-contains output "\nother arc files: arc:failures.md, arc:notes/\n")
+     (check-lacks output "secret contents"))))
 
 (test-case "a multiline next renders without a trailing blank line"
   (call-with-start-arc

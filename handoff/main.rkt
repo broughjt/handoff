@@ -287,6 +287,14 @@
      (printf "lint: ~a error~a\n" (length diagnostics) (if (= (length diagnostics) 1) "" "s"))
      (for ([diagnostic (in-list diagnostics)])
        (printf "  ~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic)))])
+  ;; Files beside the layout, such as arc-local topic documents, by name only,
+  ;; so that one no Read-first entry names is still known to exist.
+  (define layout (list* start-file checks-file log-directory state-files))
+  (define others
+    (for/list : (Listof String) ([name (in-list (sort (map path->string (directory-list arc-path)) string<?))]
+                                 #:unless (member name layout))
+      (format "arc:~a~a" name (if (directory-exists? (build-path arc-path name)) "/" ""))))
+  (printf "other arc files: ~a\n" (if (empty? others) "none" (string-join others ", ")))
   (define pending (pending-log-entry arc-path))
   (cond
     [pending
