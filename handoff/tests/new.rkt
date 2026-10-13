@@ -8,7 +8,8 @@
          typed/rackunit
          "common.rkt"
          (rename-in "../model.rkt" [check make-check])
-         "../main.rkt")
+         "../main.rkt"
+         "../toml.rkt")
 
 ;; Point XDG_CONFIG_HOME and XDG_DATA_DIRS at fresh directories, returning the
 ;; pattern directory under each. Only for use inside `call-with-repository`,
@@ -64,7 +65,7 @@
      (define arc (build-path repository "offsite"))
      (check-equal? (file->string (build-path arc "start.toml"))
                    "next = \"\"\nworkflow = \"handoff:workflow-solo.md\"\nread_first = []\n")
-     (check-equal? (file->string (build-path arc "checks.toml")) "")
+     (check-equal? (map check-id (parse-checks (read-toml (build-path arc "checks.toml")))) (list placeholder-check-id))
      (for ([name+text (in-list '(("arc.md" . "# offsite\n") ("tasks.md" . "# Tasks\n")
                                  ("do-not-reopen.md" . "# Do not reopen\n")
                                  ("open-questions.md" . "# Open questions\n") ("review.md" . "# Review\n")))])
@@ -76,13 +77,31 @@
      (check-equal? (second (string-split copy "\n" #:trim? #f)) "# `solo`")
      (check-true (string-suffix? copy pattern-text))
      (check-true (string-contains? copy (bytes->hex-string (sha256-bytes (string->bytes/utf-8 pattern-text)))))
-     ;; Lint reports only the missing next, and nothing is committed.
-     (check-regexp-match #px"lint, until the arc is written:\n  [^\n]*start\\.toml: start\\.next must be a nonempty string\n$"
+     ;; Lint reports only the missing next and the placeholder check, and
+     ;; nothing is committed.
+     (check-regexp-match (pregexp (string-append
+                                   "lint, until the arc is written:\n"
+                                   "  [^\n]*start\\.toml: start\\.next must be a nonempty string\n"
+                                   "  [^\n]*checks\\.toml: check replace-me is the placeholder from handoff new; [^\n]*\n$"))
                          (outcome-stdout result))
      (check-false (git* repository "rev-parse" "--verify" "--quiet" "HEAD"))
      (write-file (build-path arc "start.toml")
                  "next = \"Begin\"\nworkflow = \"handoff:workflow-solo.md\"\nread_first = []\n")
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"holds\"\nrun = \"true\"\n")
      (check-equal? (outcome-code (handoff* repository "lint" "offsite")) 0))))
+
+(test-case "the placeholder check fails lint, but check runs it as unknown"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (write-file (build-path arc "checks.toml") (cdr (assert (assoc "checks.toml" (new-arc-files "arc" #f)))))
+     (define lint (handoff* repository "lint" "arc"))
+     (check-equal? (outcome-code lint) 1)
+     (check-true (string-contains? (outcome-stdout lint) "check replace-me is the placeholder from handoff new")
+                 (outcome-stdout lint))
+     (define result (handoff* repository "check" "arc"))
+     (check-equal? (outcome-code result) 1 (outcome-stderr result))
+     (check-true (string-contains? (outcome-stdout result) "outcome: unknown\nexit: 3\n"))
+     (check-true (string-contains? (outcome-stdout result) "Replace this placeholder")))))
 
 (test-case "new uses an existing copy of the pattern as it stands"
   (call-with-repository

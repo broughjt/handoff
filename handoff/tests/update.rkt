@@ -140,7 +140,10 @@ TOML
      (check-refused repository "review.md" "update" "--begin")
      (write-file (build-path arc "review.md") "")
      (write-file (build-path arc "log" "01" "entry.md") "")
-     (check-refused repository "log entry number" "update" "--begin"))))
+     (check-refused repository "log entry number" "update" "--begin")
+     (delete-directory/files (build-path arc "log"))
+     (write-file (build-path arc "checks.toml") (cdr (assert (assoc "checks.toml" (new-arc-files "arc" #f)))))
+     (check-refused repository "check replace-me is the placeholder" "update" "--begin"))))
 
 (test-case "commit refuses without a pending entry, a headline or a clean lint"
   (call-with-arc

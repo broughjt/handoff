@@ -511,8 +511,8 @@
 ;; Stubs out a new handoff arc. Creates each of the expected files with minimal
 ;; content and without committing them. Takes an optional name or reference to a
 ;; `workflow` and copies it. The generated arc will fail `handoff lint` until
-;; `next` in start.toml is written (and the workflow pattern is written if one
-;; was not passed).
+;; `next` in start.toml is written and the placeholder check in checks.toml is
+;; replaced (and the workflow pattern is written if one was not passed).
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new repository arc workflow)
   (check-arc-name arc)
@@ -696,10 +696,16 @@
       (unless (file-exists? path)
         (report! start-path (format "~a: expected a regular file at ~a" (scope-path->string scope-path) path)))))
 
-  ;; The checks.toml exists and parses in the expected format.
+  ;; The checks.toml exists, parses in the expected format, and no longer holds
+  ;; the placeholder check from `handoff new`.
   (define checks-path (build-path arc checks-file))
-  (with-handlers ([exn:fail:handoff? (report-error checks-path)])
-    (parse-checks (read-toml checks-path)))
+  (define checks
+    (with-handlers ([exn:fail:handoff? (report-error checks-path)])
+      (parse-checks (read-toml checks-path))))
+  (when (and (list? checks)
+             (memf (λ ([check : check]) (equal? (check-id check) placeholder-check-id)) checks))
+    (report! checks-path (format "check ~a is the placeholder from handoff new; replace it with the arc's checks"
+                                 placeholder-check-id)))
 
   ;; - The log path either does not exist or is a directory
   ;; - Every entry is a directory named a positive integer with no leading

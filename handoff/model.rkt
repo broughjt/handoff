@@ -57,6 +57,7 @@
          workflow-copy-name
          workflow-provenance
          strip-provenance
+         placeholder-check-id
          new-arc-files)
 
 ;;; Layout
@@ -440,6 +441,24 @@
 (define (strip-provenance text)
   (regexp-replace #px"^<!-- (copied|forked|coined) [^\n]*-->\n" text ""))
 
+(define placeholder-check-id "replace-me")
+
+(define placeholder-checks
+  (string-append
+   "# Each check is a claim about the project and a command that acts as a"
+   "mechanical decision procedure for the claim. Checks run in file order."
+   "The `timeout` field is measured in seconds; it is optional and defaults to "
+   (number->string default-timeout) ".\n"
+   "[[check]]\n"
+   "id = " (toml-string placeholder-check-id) "\n"
+   "claim = " (toml-string "An natural language claim that is either true or false") "\n"
+   "run = " (toml-string (string-append
+                          "echo \"Replace this placeholder from handoff new with the arc's checks. "
+                          "run is a shell command, run from the project root, that exits 0 when "
+                          "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
+   "\n"
+   "timeout = " (number->string default-timeout) "\n"))
+
 (: new-arc-files (-> String (U scope-path #f) (Listof (Pairof String String))))
 (define (new-arc-files name workflow)
   (list*
@@ -447,6 +466,6 @@
          (format "next = ~a\nworkflow = ~a\nread_first = []\n"
                  (toml-string "")
                  (toml-string (if workflow (scope-path->string workflow) ""))))
-   (cons checks-file "")
+   (cons checks-file placeholder-checks)
    (for/list : (Listof (Pairof String String)) ([file+heading (in-list state-headings)])
      (cons (car file+heading) (format "# ~a\n" (or (cdr file+heading) name))))))
