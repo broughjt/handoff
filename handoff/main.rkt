@@ -70,7 +70,7 @@
 (struct new-subcommand ([arc : String] [workflow : (U String #f)]) #:transparent)
 (struct workflow-list-subcommand () #:transparent)
 (struct workflow-install-subcommand ([pattern : String]) #:transparent)
-(struct workflow-fork-subcommand ([arc : String] [name : String]) #:transparent)
+(struct workflow-fork-subcommand ([arc : String] [name : String] [source : String]) #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
@@ -157,7 +157,7 @@
       "Commands:"
       "  list                 list the workflow patterns"
       "  install <pattern>    copy a pattern verbatim to the handoff repository's root"
-      "  fork <arc> <name>    copy the arc's workflow into the arc as workflow-<name>.md"
+      "  fork <arc> <name> <source>  copy a pattern or workflow file into the arc as workflow-<name>.md"
       #:args (verb . verb-arguments)
       (parse-workflow-subcommand (assert verb string?)
                                  (map (λ (a) (assert a string?)) verb-arguments)))]
@@ -173,8 +173,11 @@
      (command-line #:program program #:argv arguments #:args (pattern)
                    (workflow-install-subcommand (assert pattern string?)))]
     [("fork")
-     (command-line #:program program #:argv arguments #:args (arc name)
-                   (workflow-fork-subcommand (assert arc string?) (assert name string?)))]
+     (command-line #:program program #:argv arguments
+                   #:help-labels
+                   "<source> is a pattern name from handoff workflow list, or a reference such as handoff:workflow-x.md"
+                   #:args (arc name source)
+                   (workflow-fork-subcommand (assert arc string?) (assert name string?) (assert source string?)))]
     [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
 
 (: execute (-> invocation Status))
@@ -213,7 +216,8 @@
     [(workflow-fork-subcommand? subcommand)
      (handle-workflow-fork repository
                            (select-arc repository (workflow-fork-subcommand-arc subcommand))
-                           (workflow-fork-subcommand-name subcommand))]
+                           (workflow-fork-subcommand-name subcommand)
+                           (workflow-fork-subcommand-source subcommand))]
     [else (error 'execute "unhandled subcommand ~a" subcommand)]))
 
 ;;; Commands
@@ -515,20 +519,14 @@
   (define arc-path (build-path repository arc))
   (when (or (file-exists? arc-path) (directory-exists? arc-path) (link-exists? arc-path))
     (raise-handoff-error "~a already exists in ~a" arc repository))
-  (define project (find-project-repository repository))
   ;; Everything is validated before anything is written.
-  (define-values (reference found)
-    (cond
-      [(not workflow) (values #f #f)]
-      [(regexp-match? #rx":" workflow)
-       (define reference (parse-scope-path workflow))
-       (define path (resolve-scope-path reference #:arc arc-path #:repository repository #:project project))
-       (unless (file-exists? path)
-         (raise-handoff-error "~a: expected a regular file at ~a" workflow path))
-       (values reference #f)]
-      [else
-       (define found (find-pattern workflow))
-       (values (scope-path 'handoff (string->path (workflow-copy-name workflow))) found)]))
+  (define-values (source _source-path)
+    (if workflow (find-workflow repository arc-path workflow) (values #f #f)))
+  (define found (and (pattern? source) source))
+  (define reference
+    (if (pattern? source)
+        (scope-path 'handoff (string->path (workflow-copy-name (pattern-name source))))
+        source))
   (define copied (and found (install-pattern repository found)))
   (make-directory arc-path)
   (for ([file+contents (in-list (new-arc-files arc reference))])
@@ -556,38 +554,31 @@
       (printf "~a already exists and was not modified\n" reference))
   'success)
 
-;; Copy the arc's current workflow into the arc under a new name, recording the
-;; reference it was forked from and that file's hash. Leaves start.toml for the
-;; agent to point at the fork.
-(: handle-workflow-fork (-> Path String String Status))
-(define (handle-workflow-fork repository arc name)
+;; Copy a pattern or an existing workflow file into the arc under a new name,
+;; for the agent to amend, recording where it was forked from and that file's
+;; hash. Leaves start.toml for the agent to point at the fork.
+(: handle-workflow-fork (-> Path String String String Status))
+(define (handle-workflow-fork repository arc name workflow)
   (unless (pattern-name? name)
     (raise-handoff-error "~a: a workflow name is lowercase letters, digits and hyphens" name))
   (define arc-path (build-path repository arc))
-  (define start-path (build-path arc-path start-file))
-  (define start*
-    (with-handlers ([exn:fail:handoff?
-                     (λ ([error : exn])
-                       (raise-handoff-error "~a: ~a" start-path (exn-message error)))])
-      (parse-start (read-toml start-path))))
-  (define source (start-workflow start*))
-  (define source-path
-    (resolve-scope-path source #:arc arc-path #:repository repository
-                        #:project (find-project-repository repository)))
-  (unless (file-exists? source-path)
-    (raise-handoff-error "~a: expected a regular file at ~a" (scope-path->string source) source-path))
+  (define-values (source source-path) (find-workflow repository arc-path workflow))
+  (define description
+    (if (pattern? source)
+        (format "workflow pattern ~a" (pattern-name source))
+        (scope-path->string source)))
   (define file (workflow-copy-name name))
   (define path (build-path arc-path file))
   (when (or (file-exists? path) (directory-exists? path) (link-exists? path))
     (raise-handoff-error "~a already exists" path))
   (define text (file->string source-path))
-  (display-to-file (string-append (workflow-provenance 'forked (scope-path->string source) text
+  (display-to-file (string-append (workflow-provenance 'forked description text
                                                        (date->string (current-seconds)))
                                   (strip-provenance text))
                    path
                    #:exists 'error)
   (printf "forked arc:~a from ~a\nto use it, set workflow in ~a to \"arc:~a\"\n"
-          file (scope-path->string source) start-file file)
+          file description start-file file)
   'success)
 
 (: refuse-lint-errors (-> Path String Void))
@@ -886,6 +877,22 @@
   (for/list ([key (in-list (sort order string<?))])
     (hash-ref found key)))
 
+;; A workflow named on the command line: a pattern name, or a reference to an
+;; existing file, `arc:` resolving against `arc`. Also the file's path.
+(: find-workflow (-> Path Path String (Values (U pattern scope-path) Path)))
+(define (find-workflow repository arc workflow)
+  (cond
+    [(regexp-match? #rx":" workflow)
+     (define reference (parse-scope-path workflow))
+     (define path (resolve-scope-path reference #:arc arc #:repository repository
+                                      #:project (find-project-repository repository)))
+     (unless (file-exists? path)
+       (raise-handoff-error "~a: expected a regular file at ~a" workflow path))
+     (values reference path)]
+    [else
+     (define found (find-pattern workflow))
+     (values found (pattern-path found))]))
+
 (: find-pattern (-> String pattern))
 (define (find-pattern name)
   (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) name)) (find-patterns))
@@ -898,7 +905,9 @@
     [(or (file-exists? path) (link-exists? path)) #f]
     [else
      (define text (file->string (pattern-path pattern)))
-     (display-to-file (string-append (workflow-provenance 'copied (pattern-name pattern) text
+     (display-to-file (string-append (workflow-provenance 'copied
+                                                          (format "workflow pattern ~a" (pattern-name pattern))
+                                                          text
                                                           (date->string (current-seconds)))
                                      text)
                       path

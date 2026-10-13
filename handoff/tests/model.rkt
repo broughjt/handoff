@@ -182,7 +182,7 @@
   (check-equal? (pattern-summary "# Only a heading\n") ""))
 
 (test-case "a verbatim copy's provenance records the SHA-256 of the pattern in lowercase hexadecimal"
-  (check-equal? (workflow-provenance 'copied "solo" "abc" "2026-10-13")
+  (check-equal? (workflow-provenance 'copied "workflow pattern solo" "abc" "2026-10-13")
                 "<!-- copied from workflow pattern solo (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13; verbatim -->\n"))
 
 (test-case "a fork's provenance names its source reference"

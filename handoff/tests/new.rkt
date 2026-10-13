@@ -142,49 +142,57 @@
 
 ;;; workflow fork
 
-(define (fork! [repository : Path] [arc : String] [name : String])
-  (define result (handoff* repository "workflow" "fork" arc name))
+(define (fork! [repository : Path] [arc : String] [name : String] [source : String])
+  (define result (handoff* repository "workflow" "fork" arc name source))
   (check-equal? (outcome-code result) 0 (outcome-stderr result))
   (outcome-stdout result))
 
 (define (sha256-hex [text : String])
   (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text))))
 
-(test-case "workflow fork copies the arc's workflow into it, recording the immediate source"
+(define (fork-pattern [source : String] [hashed : String] [body : String])
+  (pregexp (format "^<!-- forked from ~a \\(sha256:~a\\) on \\d{4}-\\d{2}-\\d{2} -->\n~a$"
+                   (regexp-quote source) hashed (regexp-quote body))))
+
+(test-case "workflow fork copies a reference into the arc, recording only the immediate source"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
      (define shared "<!-- copied from workflow pattern shared (sha256:00) on 2026-10-01; verbatim -->\n# Shared\n\nRules.\n")
      (write-file (build-path repository "shared.md") shared)
      (define start (file->string (build-path arc "start.toml")))
-     (check-equal? (fork! repository "arc" "mine")
+     (check-equal? (fork! repository "arc" "mine" "handoff:shared.md")
                    "forked arc:workflow-mine.md from handoff:shared.md\nto use it, set workflow in start.toml to \"arc:workflow-mine.md\"\n")
      (define fork (file->string (build-path arc "workflow-mine.md")))
-     (check-regexp-match
-      (pregexp (format "^<!-- forked from handoff:shared\\.md \\(sha256:~a\\) on \\d{4}-\\d{2}-\\d{2} -->\n# Shared\n\nRules\\.\n$"
-                       (sha256-hex shared)))
-      fork)
+     (check-regexp-match (fork-pattern "handoff:shared.md" (sha256-hex shared) "# Shared\n\nRules.\n") fork)
      ;; start.toml is the agent's to change.
      (check-equal? (file->string (build-path arc "start.toml")) start)
-     ;; A fork of a fork names the fork it came from.
-     (write-file (build-path arc "start.toml")
-                 "next = \"Continue\"\nworkflow = \"arc:workflow-mine.md\"\nread_first = []\n")
-     (fork! repository "arc" "again")
-     (check-regexp-match
-      (pregexp (format "^<!-- forked from arc:workflow-mine\\.md \\(sha256:~a\\) on \\d{4}-\\d{2}-\\d{2} -->\n# Shared\n\nRules\\.\n$"
-                       (sha256-hex fork)))
-      (file->string (build-path arc "workflow-again.md"))))))
+     ;; A fork of a fork names the fork it came from; arc: means the arc forked into.
+     (fork! repository "arc" "again" "arc:workflow-mine.md")
+     (check-regexp-match (fork-pattern "arc:workflow-mine.md" (sha256-hex fork) "# Shared\n\nRules.\n")
+                         (file->string (build-path arc "workflow-again.md"))))))
+
+(test-case "workflow fork copies a pattern, whatever the arc runs under"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (define-values (_config data) (use-pattern-directories (build-path repository 'up 'up)))
+     (write-file (build-path data "solo.md") pattern-text)
+     (check-equal? (fork! repository "arc" "solo-amended" "solo")
+                   "forked arc:workflow-solo-amended.md from workflow pattern solo\nto use it, set workflow in start.toml to \"arc:workflow-solo-amended.md\"\n")
+     (check-regexp-match (fork-pattern "workflow pattern solo" (sha256-hex pattern-text) pattern-text)
+                         (file->string (build-path arc "workflow-solo-amended.md")))
+     ;; Forking installs nothing at the root.
+     (check-false (file-exists? (build-path repository "workflow-solo.md"))))))
 
 (test-case "workflow fork refuses, writing nothing"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
+     (use-pattern-directories (build-path repository 'up 'up))
      (write-file (build-path arc "workflow-taken.md") "taken")
      (define before (snapshot repository))
-     (for ([arguments (in-list '(("arc" "Bad Name") ("arc" "taken") ("absent" "fine")))])
+     (for ([arguments (in-list '(("arc" "Bad Name" "handoff:shared.md") ("arc" "taken" "handoff:shared.md")
+                                 ("absent" "fine" "handoff:shared.md") ("arc" "fine" "handoff:missing.md")
+                                 ("arc" "fine" "absent-pattern") ("arc" "fine" "other:shared.md")
+                                 ("arc" "fine")))])
        (define result (apply handoff* repository "workflow" "fork" arguments))
        (check-equal? (outcome-code result) 2 (format "~a" arguments))
-       (check-equal? (snapshot repository) before))
-     (write-file (build-path arc "start.toml") "next = \"Continue\"\nworkflow = \"handoff:missing.md\"\nread_first = []\n")
-     (check-equal? (outcome-code (handoff* repository "workflow" "fork" "arc" "fine")) 2)
-     (write-file (build-path arc "start.toml") "not toml")
-     (check-equal? (outcome-code (handoff* repository "workflow" "fork" "arc" "fine")) 2)
-     (check-false (file-exists? (build-path arc "workflow-fine.md"))))))
+       (check-equal? (snapshot repository) before)))))

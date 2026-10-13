@@ -421,15 +421,15 @@
 (define (workflow-copy-name name)
   (string-append "workflow-" name ".md"))
 
-;; The line opening a workflow copied verbatim from pattern `source`, or forked
-;; from the file `source` refers to, when that file's contents were `text`. The
-;; hash says whether the source has changed since; for a verbatim copy, also
-;; whether the copy was amended.
+;; The line opening a workflow copied verbatim or forked from `source`, which
+;; describes a pattern ("workflow pattern spike") or is a reference to a file,
+;; when the source's contents were `text`. The hash says whether the source has
+;; changed since. For a verbatim copy, also include whether the copy was
+;; amended.
 (: workflow-provenance (-> (U 'copied 'forked) String String String String))
 (define (workflow-provenance how source text date)
-  (format "<!-- ~a from ~a~a (sha256:~a) on ~a~a -->\n"
+  (format "<!-- ~a from ~a (sha256:~a) on ~a~a -->\n"
           how
-          (if (eq? how 'copied) "workflow pattern " "")
           source
           (bytes->hex-string (sha256-bytes (string->bytes/utf-8 text)))
           date
