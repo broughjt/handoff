@@ -11,10 +11,10 @@ evidence rather than a guess.
 Experiments are committed on a new branch that is not intended to be
 merged.
 
-The verdict goes in `.scratch/handoff-<project>/spike-<slug>.md`. This should
-consist of the question, what was tried, what was observed with real numbers,
-the sha of the throwaway branch, and a recommendation. The arc doc points at
-that file from `Read first` and states the conclusion itself, so the finding
+The verdict goes in `arc:spike-<slug>.md`. This should consist of the
+question, what was tried, what was observed with real numbers, the name of the
+throwaway branch, and a recommendation. The arc's `Read first` list points at
+that file, and a topic document states the conclusion itself, so the finding
 outlives the file.
 
 The spike ends when the investigation yields answers. Building on it is a
@@ -23,4 +23,4 @@ deliberately instead of inherited from throwaway code.
 
 ## Review
 
-None. `Review` stays `none` for the whole spike.
+None. Nothing is added to `review.md` for the whole spike.
