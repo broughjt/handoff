@@ -174,7 +174,7 @@
                      (λ ([error : exn])
                        (raise-handoff-error "~a: ~a" checks-path (exn-message error)))])
       (parse-checks (read-toml checks-path))))
-  (define run (run-checks checks (project-branch-head (find-project-repository repository))))
+  (define run (run-checks checks (find-project-repository repository)))
   (report run)
   (if (andmap (λ ([result : check-result]) (eq? (check-result-outcome result) 'true))
               (check-run-results run))
@@ -268,7 +268,7 @@
     [(string? checks) (printf "not run: ~a: ~a\n" checks-file checks)]
     [else
      (newline)
-     (report (run-checks checks (project-branch-head project)) #:baseline baseline)])
+     (report (run-checks checks project) #:baseline baseline)])
 
   (define start*
     (with-handlers ([exn:fail:handoff? (λ (_) #f)])
@@ -346,7 +346,7 @@
   (define arc-path (build-path repository arc))
   (refuse-lint-errors repository arc)
   (define checks (parse-checks (read-toml (build-path arc-path checks-file))))
-  (define run (run-checks checks (project-branch-head (find-project-repository repository))))
+  (define run (run-checks checks (find-project-repository repository)))
 
   (define-values (numbers _invalid) (list-log-entries arc-path))
   (define number (or (pending-log-entry arc-path) (add1 (apply max 0 numbers))))
@@ -570,12 +570,15 @@
 ;; is dropped: a failure is usually explained at the end.
 (define capture-limit : Exact-Positive-Integer (* 1024 1024))
 
-(: run-checks (-> (Listof check) branch-head check-run))
+(: run-checks (-> (Listof check) Path check-run))
 (define (run-checks checks project)
   (define wall-clock (current-seconds))
   (define started (current-inexact-monotonic-milliseconds))
-  (define results (map run-check checks))
-  (check-run (gethostname) wall-clock (seconds-since started) project results))
+  ;; Checks run in the project root, so that a relative path in a check means
+  ;; the same thing wherever handoff was run from.
+  (define results (parameterize ([current-directory project])
+                    (map run-check checks)))
+  (check-run (gethostname) wall-clock (seconds-since started) (project-branch-head project) results))
 
 (: run-check (-> check check-result))
 (define (run-check check)

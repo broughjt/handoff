@@ -83,6 +83,15 @@ TOML
        (when (string=? contents "")
          (check-true (string-contains? (outcome-stdout result) "no checks")))))))
 
+(test-case "checks run in the project root wherever handoff runs from"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (write-file (build-path arc "checks.toml")
+                 "[[check]]\nid = \"root\"\nclaim = \"runs in the project root\"\nrun = \"test -d .scratch/handoff\"\n")
+     (for ([directory (in-list (list repository arc))])
+       (define result (handoff directory "check"))
+       (check-equal? (outcome-code result) 0 (outcome-stdout result))))))
+
 (test-case "check shows only the tail of the output"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
