@@ -79,7 +79,7 @@
                   "==> .scratch/handoff/arc/do-not-reopen.md <==\n\n"
                   "==> .scratch/handoff/arc/open-questions.md <==\n\n"
                   "==> .scratch/handoff/arc/review.md <==\n\n"
-                  (format "==> project repository status <==\nrepository: ~a\npaths above are relative to it\nnow: "
+                  (format "==> project repository status <==\nrepository: ~a\nnow: "
                           (string-trim (path->string project) "/" #:left? #f))
                   "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\npending: none\nuncommitted: none\n\n"
                   "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
@@ -155,7 +155,7 @@
      (record! repository arc "First")
      (check-equal? (outcome-code (handoff* repository "update" "--begin")) 0)
      (define output (start! repository))
-     (check-regexp-match #px"\npending: log/2 [^\n]*not the baseline\n  results: recorded on \\S+ at [^\n]+\n  entry.md: not written\n"
+     (check-regexp-match #px"\npending log entry: log/2 [^\n]*not the baseline\n  results: recorded on \\S+ at [^\n]+\n  entry.md: not written\n"
                          output)
      (check-contains output "compared against log/1" "==> .scratch/handoff/arc/log/1/entry.md <==")
      (check-lacks output "log/2/entry.md"))))
@@ -173,7 +173,7 @@
                      "not compared: log/2/results.toml: "
                      "==> .scratch/handoff/arc/log/2/entry.md <==\n# Second\n")
      (check-lacks output "compared against log/1" "log/1/entry.md" "at log/")
-     (check-regexp-match #px"==> project repository status <==\n[^\n]+\n[^\n]+\nnow: [^\n]+\n\n" output))))
+     (check-regexp-match #px"==> project repository status <==\n[^\n]+\nnow: [^\n]+\n\n" output))))
 
 (test-case "start reports what happened to the project since the latest entry"
   (call-with-start-arc
