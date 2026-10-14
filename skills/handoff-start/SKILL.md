@@ -29,14 +29,14 @@ time they need. Never put it in the background.
 - **No arcs**: say so, offer handoff-create, and stop.
 - **No handoff repository**: say so and stop. The user creates it.
 
-## Step 3: Read what the brief points at
+## Step 3: Read what the report points at
 
-The brief inlines `start.toml`, `arc.md`, the workflow, the section files and
+The report inlines `start.toml`, `arc.md`, the workflow, the section files and
 the latest entry. Do not read them again.
 
-Read every `read_first` entry the brief marks present. Read other arc files and
+Read every `read_first` entry the report marks present. Read other arc files and
 topic documents only when `next` needs them. Do not read older log entries
-unless something in the brief is unclear and the history would resolve it.
+unless something in the report is unclear and the history would resolve it.
 
 ## Step 4: Interpret the report
 
@@ -87,7 +87,8 @@ documents say.
 - Discrepancies from step 4.
 - Unconfirmed proposals `next` rests on. List them every session until the
   user confirms or strikes them.
-- Open questions, those marked `— blocks Next.` first.
+- Open questions, those `next` cannot proceed without first. Judge this from
+  what each entry says depends on it.
 - Open review items, briefly. They never hold `next`.
 
 ## Step 6: Wait, or begin

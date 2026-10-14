@@ -190,7 +190,7 @@
                 "<!-- forked from arc:workflow-a.md (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13 -->\n"))
 
 (test-case "only an opening provenance line is stripped"
-  (for ([how (in-list '("copied from x" "forked from y" "coined for this arc on z"))])
+  (for ([how (in-list '("copied from x" "forked from y" "created for this arc on z"))])
     (check-equal? (strip-provenance (format "<!-- ~a -->\n# W\n" how)) "# W\n" how))
   (for ([text (in-list '("# W\n" "<!-- a note -->\n# W\n" "# W\n<!-- copied from x -->\n"))])
     (check-equal? (strip-provenance text) text text)))

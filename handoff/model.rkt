@@ -439,7 +439,7 @@
 ;; A workflow's text without its opening provenance line, if it has one.
 (: strip-provenance (-> String String))
 (define (strip-provenance text)
-  (regexp-replace #px"^<!-- (copied|forked|coined) [^\n]*-->\n" text ""))
+  (regexp-replace #px"^<!-- (copied|forked|created) [^\n]*-->\n" text ""))
 
 (define placeholder-check-id "replace-me")
 

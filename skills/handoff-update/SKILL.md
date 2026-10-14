@@ -8,6 +8,8 @@ description: >-
   arc. Companion skills are handoff-create and handoff-start.
 ---
 
+TODO: handoff-update has no step for proposing a workflow change mid-arc. Step 4 records a switch, but nothing prompts the agent to suggest one. One sentence in step 7's confirmation interview would cover it: a proposed workflow change is a decision to confirm there.
+
 # Recording a handoff
 
 Arguments:
@@ -20,7 +22,7 @@ Arguments:
 
 Run `handoff guide` and read the file it names, unless you have already read it
 this session and it is still in view. Its *Updates*, *Decisions and
-provenance* and *Writing state* sections govern everything below.
+provenance* and *Writing arc files* sections govern everything below.
 
 ## Step 2: Settle the inputs
 
@@ -61,12 +63,11 @@ asks for yours.
 ## Step 5: Edit state in place
 
 - `tasks.md`: status, with the date and the commit subject for finished tasks.
-- Facts: to a topic document, root or arc-local by the test in *Where facts
-  go*. Correct wrong ones where they live.
+- Facts: to a topic document, root or arc-local as *Storing findings*
+  says. Correct wrong ones where they live.
 - `do-not-reopen.md` and `open-questions.md`: only as *Decisions and
   provenance* allows. Delete an answered question and move its answer where it
-  belongs. Set or clear `— blocks Next.` for the `next` you are about to
-  write.
+  belongs.
 - `review.md`: add an item for work that ends unreviewed, by the workflow's
   rule.
 - `arc.md`: when the route or done-when changed.

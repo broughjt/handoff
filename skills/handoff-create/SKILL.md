@@ -61,6 +61,8 @@ the arc while material questions are open.
 
 ### Choosing a workflow
 
+TODO: handoff-create's "Choosing a workflow" now partly restates Writing a workflow. It could be cut back to the procedure: shortlist, open the candidates, and the bar of naming the property the patterns handle badly.
+
 `handoff workflow list` is a starting vocabulary, not a menu. Shortlist from
 its summaries, open the candidates you are weighing, and propose the workflow
 that suits this arc, including one the user has not thought of.
