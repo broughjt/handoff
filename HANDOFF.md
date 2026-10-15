@@ -238,7 +238,7 @@ The hash is of the source at the time it was copied. Hashing the copy shows whet
 
 ### Writing a workflow
 
-A workflow written for an arc must be followable by a fresh agent without additional clarification. It should describe what the agent should do and in what order, what it should not do, and what counts as finished. It should also describe what to include in the review list. Put this in a `## Review` section that describes the reviewable unit of work that should be added as an item in `review.md` when work ends unreviewed, or says there are none (see *The review list*). A workflow may fit only a specific phase of the arc. When this is true, say so in the file.
+A workflow written for an arc must be followable by a fresh agent without additional clarification. It should describe what the agent should do and in what order, what it should not do, and what counts as finished. It should also describe what to include in the review list. Put this in a `## Review` section that describes the reviewable unit of work that should be added as an item in `review.md` when work ends unreviewed, or says there are none (see *The review list*). A workflow may fit only a specific phase of the arc. When this is true, say so in the file, or, for a verbatim copy, which cannot be edited, in the route in `arc.md`.
 
 If a procedure is repeated across sessions, indicate this in a named section of the workflow and point the `start.toml` `next` field to that section rather than restating it in `next`.
 
