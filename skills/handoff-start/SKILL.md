@@ -28,7 +28,7 @@ Run `handoff start [arc]` synchronously. It runs the checks, so give it the time
 
 The report inlines `start.toml`, `arc.md`, the workflow, `tasks.md`, `do-not-reopen.md`, `open-questions.md`, `review.md`, and the latest log entry. Do not read them again unless you mean to modify them.
 
-Read every `read_first` entry the report lists, except those it marks missing, which are discrepancies (step 4). By default, read other arc files and topic documents only when `next` needs them. Do not read older log entries unless something in the report is unclear and reading the history would resolve it.
+Read every `read_first` entry the report lists, except those it marks missing, which are discrepancies (step 4). The report lists the arc's other files and the topic documents with their summaries. By default, read these only when their summaries bear directly on `next`. Do not read older log entries unless something in the report is unclear and reading the history would resolve it.
 
 ## Step 4: Interpret the report
 
