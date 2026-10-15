@@ -255,130 +255,18 @@
   (printf "~a: ~a lint errors\n" arc (length diagnostics))
   (if (empty? diagnostics) 'success 'failure))
 
-;; Brief an agent to start work on a handoff arc. First the arc's state: its
-;; start metadata, the files it names and the latest log entry, inlined, and
-;; the other documents with their summaries. Then what has happened since
-;; that entry: the project's commits, the handoff repository's lint
-;; diagnostics, pending entry and uncommitted changes, and the checks compared
-;; against the entry's results. Renders whatever parses and writes nothing.
-;; Paths are shown relative to the project.
+;; Brief an agent to start work on a handoff arc (see `render-start`). Reads
+;; and runs everything first, then prints the brief, and writes nothing.
 (: handle-start (-> Path String Status))
-(define (handle-start repository* arc)
+(define (handle-start repository* name)
   (define repository (normalize-path repository*))
-  (define arc-path (build-path repository arc))
-  (define project (find-project-repository repository))
-  (define (show-path [path : Path]) (some-system-path->string (find-relative-path project path)))
-  (define first-section? #t)
-  (define (section [name : String])
-    (unless first-section? (newline))
-    (set! first-section? #f)
-    (printf "==> ~a <==\n" name))
-  (define arc* (read-arc arc-path repository))
-  (define baseline (arc-baseline arc*))
-
-  (define start-path (build-path arc-path start-file))
-  (section (format "start, generated from ~a" (show-path start-path)))
-  (define start* (let ([start* (arc-start arc*)]) (and (start? start*) start*)))
-  (define (resolve [scope-path : scope-path])
-    (resolve-reference arc* scope-path))
-  (cond
-    [start*
-     (define (describe [reference : reference])
-       (define path (show-path (reference-path reference)))
-       (if (reference-exists? reference) path (format "~a (missing)" path)))
-     (printf "Next:\n")
-     ;; A TOML multiline string usually ends in a newline, which would render
-     ;; as a blank line.
-     (for ([line (in-list (string-split (string-trim (start-next start*) #:left? #f) "\n" #:trim? #f))])
-       (printf "  ~a\n" line))
-     (printf "Workflow: ~a\n" (describe (resolve (start-workflow start*))))
-     (printf "Read first:\n")
-     (when (empty? (start-read-first start*))
-       (printf "  nothing\n"))
-     (for ([read (in-list (start-read-first start*))])
-       (printf "- ~a: ~a\n" (describe (resolve (read-first-path read))) (read-first-reason read)))]
-    [else (printf "~a did not parse; see the lint diagnostics under handoff repository status\n" start-file)])
-
-  (define (inline [path : Path] [text : (U String #f)])
-    (when text
-      (section (show-path path))
-      (write-string text)
-      (unless (or (string=? text "") (string-suffix? text "\n"))
-        (newline))))
-  (define-values (arc-file other-state-files)
-    (values (first (arc-state-files arc*)) (rest (arc-state-files arc*))))
-  (inline (build-path arc-path (car arc-file)) (cdr arc-file))
-  (when start*
-    (inline (reference-path (resolve (start-workflow start*))) (arc-workflow-text arc*)))
-  (for ([file (in-list other-state-files)])
-    (inline (build-path arc-path (car file)) (cdr file)))
-  (when baseline
-    (inline (build-path (log-entry-path arc-path (log-entry-number baseline)) entry-file)
-            (log-entry-entry baseline)))
-
-  ;; Each with its summary, so an agent can choose what to open, except the
-  ;; workflow, which is inlined above.
-  (section "other documents")
-  (define workflow-path (and start* (simplify-path (reference-path (resolve (start-workflow start*))) #f)))
-  (define documents
-    (filter-not (λ ([document : document]) (equal? (simplify-path (document-path document) #f) workflow-path))
-                (arc-documents arc*)))
-  (when (empty? documents)
-    (printf "nothing\n"))
-  (for ([document (in-list documents)])
-    (define text (document-text document))
-    (define summary (if text (document-summary text) ""))
-    (printf "- ~a~a\n" (document-label document) (if (string=? summary "") "" (string-append ": " summary))))
-
-  (section "project repository status")
-  (write-string (render-project (read-project-status project baseline)))
-
-  (section "handoff repository status")
-  (printf "repository: ~a\n" (show-path repository))
-  (define diagnostics (lint arc*))
-  (cond
-    [(empty? diagnostics) (printf "lint: no errors\n")]
-    [else
-     (printf "lint: ~a error~a\n" (length diagnostics) (if (= (length diagnostics) 1) "" "s"))
-     (for ([diagnostic (in-list diagnostics)])
-       (printf "  ~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic)))])
-  (define pending (entry-log-pending (arc-log arc*)))
-  (cond
-    [pending
-     (define entry (assert (findf (λ ([entry : log-entry]) (= (log-entry-number entry) pending))
-                                  (entry-log-entries (arc-log arc*)))))
-     (define run (let ([run (log-entry-results entry)]) (and (check-run? run) run)))
-     (printf "pending log entry: log/~a was begun with handoff update --begin but not committed, so it is not the baseline\n"
-             pending)
-     (printf "  results: ~a\n"
-             (if run
-                 (format "recorded on ~a at ~a"
-                         (check-run-host run) (timestamp->string (check-run-started run)))
-                 "none readable"))
-     (printf "  entry.md: ~a\n" (if (log-entry-entry entry) "written" "not written"))]
-    [else (printf "pending log entry: none\n")])
+  (define arc* (read-arc (build-path repository name) repository))
+  (define status (read-project-status (arc-project arc*) (arc-baseline arc*)))
   ;; Without --no-optional-locks, status may refresh and rewrite the index.
   (define dirty (string-split (git repository "--no-optional-locks" "status" "--porcelain") "\n"))
-  (cond
-    [(empty? dirty) (printf "uncommitted: none\n")]
-    [else
-     (printf "uncommitted, relative to the repository:\n")
-     (for ([line (in-list dirty)])
-       (printf "  ~a\n" line))])
-
-  (section "checks")
-  (define previous (and baseline (log-entry-run baseline)))
-  (cond
-    [(not baseline) (printf "no earlier log entry to compare against\n")]
-    [(check-run? previous) (printf "compared against log/~a, recorded on ~a at ~a\n"
-                                   (log-entry-number baseline) (check-run-host previous)
-                                   (timestamp->string (check-run-started previous)))]
-    [else (printf "not compared: log/~a/~a: ~a\n"
-                  (log-entry-number baseline) results-file (failure-message (assert previous failure?)))])
   (define checks (arc-checks arc*))
-  (cond
-    [(failure? checks) (printf "not run: ~a: ~a\n" checks-file (failure-message checks))]
-    [else (void (run-and-report checks project #:baseline baseline))])
+  (define run (and (list? checks) (run-checks checks (arc-project arc*))))
+  (write-string (render-start arc* status dirty run))
   'success)
 
 ;; The project's branch and head, and what happened since those recorded in
@@ -418,18 +306,17 @@
 ;; file of the pending log entry, creating the next log entry when none is
 ;; pending. Rerunning replaces results.toml but leaves entry.md alone.
 (: handle-update-begin (-> Path String Status))
-(define (handle-update-begin repository arc)
-  (define arc-path (build-path repository arc))
-  (refuse-lint-errors repository arc)
-  (define checks (parse-checks (read-toml (build-path arc-path checks-file))))
-  (define run (run-and-report checks (find-project-repository repository)))
+(define (handle-update-begin repository name)
+  (define arc* (read-arc (build-path repository name) repository))
+  (refuse (lint-refusal arc*))
+  ;; Lint has accepted checks.toml.
+  (define run (run-and-report (assert (arc-checks arc*) list?) (arc-project arc*)))
 
-  (define-values (numbers _invalid) (list-log-entries arc-path))
-  (define number (or (pending-log-entry arc-path) (add1 (apply max 0 numbers))))
-  (define entry-path (log-entry-path arc-path number))
+  (define number (next-entry-number (arc-log arc*)))
+  (define entry-path (log-entry-path (arc-directory arc*) number))
   (unless (directory-exists? entry-path)
-    (make-directory* (build-path arc-path log-directory))
-    ;; Fails rather than reusing an entry that appeared since we listed the log.
+    (make-directory* (build-path (arc-directory arc*) log-directory))
+    ;; Fails rather than reusing an entry that appeared since we read the log.
     (make-directory entry-path))
   (define results-path (build-path entry-path results-file))
   (define temporary (path-add-extension results-path #".tmp"))
@@ -437,38 +324,18 @@
   (rename-file-or-directory temporary results-path #t)
 
   (printf "\nlog/~a results recorded. Write the entry to ~a, then run handoff update --commit ~a\n"
-          number (build-path entry-path entry-file) arc)
+          number (build-path entry-path entry-file) name)
   'success)
 
 ;; Commit the pending log entry with the arc's changes and anything already
-;; staged in the handoff repository. Refuse if the results.toml no longer
-;; matches the current state.
+;; staged in the handoff repository, unless `commit-refusal` refuses.
 (: handle-update-commit (-> Path String Status))
-(define (handle-update-commit repository arc)
-  (define arc-path (build-path repository arc))
-  (define number
-    (or (pending-log-entry arc-path)
-        (raise-handoff-error "~a has no update in progress; run handoff update --begin first" arc)))
-  (define entry-path (log-entry-path arc-path number))
-  (define entry (build-path entry-path entry-file))
-  (unless (file-exists? entry)
-    (raise-handoff-error "write the entry to ~a first" entry))
-  (define subject (format "~a: ~a" arc (entry-headline (file->string entry))))
-  (refuse-lint-errors repository arc)
-
-  (define results-path (build-path entry-path results-file))
-  (unless (file-exists? results-path)
-    (raise-handoff-error "log/~a has no results; run handoff update --begin again" number))
-  (define recorded (parse-check-run (read-toml results-path)))
-  (define checks (parse-checks (read-toml (build-path arc-path checks-file))))
-  (unless (equal? checks (map check-result-check (check-run-results recorded)))
-    (raise-handoff-error "~a changed since log/~a's results were recorded; run handoff update --begin again"
-                         checks-file number))
-  (define recorded-head (check-run-project-head recorded))
-  (define head (project-branch-head (find-project-repository repository)))
-  (unless (equal? head recorded-head)
-    (raise-handoff-error "the project moved from ~a to ~a since log/~a's results were recorded; run handoff update --begin again"
-                         (describe-branch-head recorded-head) (describe-branch-head head) number))
+(define (handle-update-commit repository name)
+  (define arc* (read-arc (build-path repository name) repository))
+  (refuse (commit-refusal arc* (project-branch-head (arc-project arc*))))
+  (define entry (assert (arc-pending-entry arc*)))
+  (define number (log-entry-number entry))
+  (define subject (format "~a: ~a" name (entry-headline (assert (log-entry-entry entry)))))
 
   ;; Fails on an unmerged index, which could not be committed anyway.
   (define index (string-trim (git repository "write-tree")))
@@ -476,7 +343,7 @@
                    (λ ([error : exn])
                      (git* repository "read-tree" index)
                      (raise error))])
-    (git repository "add" "--" arc)
+    (git repository "add" "--" name)
     (git repository "commit" "--quiet" "--message" subject))
 
   (printf "log/~a committed as ~a ~a\n"
@@ -595,13 +462,10 @@
           file description start-file file)
   'success)
 
-(: refuse-lint-errors (-> Path String Void))
-(define (refuse-lint-errors repository arc)
-  (define diagnostics (lint (read-arc (build-path repository arc) repository)))
-  (unless (empty? diagnostics)
-    (raise-handoff-error "~a has ~a lint errors:\n~a"
-                         arc (length diagnostics)
-                         (string-join (map diagnostic->string diagnostics) "\n"))))
+(: refuse (-> (U String #f) Void))
+(define (refuse refusal)
+  (when refusal
+    (raise-handoff-error "~a" refusal)))
 
 ;; Run the checks, printing each check's result as soon as it and every check
 ;; before it in file order have finished, so that the output does not depend

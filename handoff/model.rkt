@@ -5,6 +5,7 @@
          racket/list
          racket/match
          racket/math
+         racket/path
          racket/string
          typed/file/sha1
          "error.rkt"
@@ -84,7 +85,13 @@
          (struct-out project-status)
          (struct-out project-change)
          History
-         render-project)
+         render-project
+         render-run
+         render-start
+         arc-pending-entry
+         next-entry-number
+         lint-refusal
+         commit-refusal)
 
 ;;; Layout
 
@@ -593,6 +600,59 @@
             (entry-log-entries log)))
   (and (pair? complete) (last complete)))
 
+;; The pending log entry, if there is one.
+(: arc-pending-entry (-> arc (U log-entry #f)))
+(define (arc-pending-entry arc*)
+  (define log (arc-log arc*))
+  (findf (λ ([entry : log-entry]) (eqv? (log-entry-number entry) (entry-log-pending log)))
+         (entry-log-entries log)))
+
+;; The number of the entry `update --begin` records into: the pending entry,
+;; or one past the highest-numbered entry.
+(: next-entry-number (-> entry-log Exact-Positive-Integer))
+(define (next-entry-number log)
+  (or (entry-log-pending log)
+      (add1 (apply max 0 (map log-entry-number (entry-log-entries log))))))
+
+;; Why an update must not proceed: the arc has lint errors.
+(: lint-refusal (-> arc (U String #f)))
+(define (lint-refusal arc*)
+  (define diagnostics (lint arc*))
+  (and (pair? diagnostics)
+       (format "~a has ~a lint errors:\n~a"
+               (arc-name arc*) (length diagnostics) (string-join (map diagnostic->string diagnostics) "\n"))))
+
+;; Why `update --commit` must refuse, given the project's head now: there is
+;; no pending entry or it has no headline, the arc has lint errors, or the
+;; pending entry's results no longer match the checks or the project.
+(: commit-refusal (-> arc branch-head (U String #f)))
+(define (commit-refusal arc* head)
+  (define entry (arc-pending-entry arc*))
+  (define checks (arc-checks arc*))
+  (cond
+    [(not entry)
+     (format "~a has no update in progress; run handoff update --begin first" (arc-name arc*))]
+    [(not (log-entry-entry entry))
+     (format "write the entry to ~a first"
+             (build-path (log-entry-path (arc-directory arc*) (log-entry-number entry)) entry-file))]
+    [(with-handlers ([exn:fail:handoff? exn-message])
+       (entry-headline (assert (log-entry-entry entry)))
+       #f)]
+    [(lint-refusal arc*)]
+    [else
+     (define number (log-entry-number entry))
+     (define recorded (log-entry-results entry))
+     (cond
+       [(not (check-run? recorded))
+        (format "log/~a has no results; run handoff update --begin again" number)]
+       [(not (equal? checks (map check-result-check (check-run-results recorded))))
+        (format "~a changed since log/~a's results were recorded; run handoff update --begin again"
+                checks-file number)]
+       [(not (equal? head (check-run-project-head recorded)))
+        (format "the project moved from ~a to ~a since log/~a's results were recorded; run handoff update --begin again"
+                (describe-branch-head (check-run-project-head recorded)) (describe-branch-head head) number)]
+       [else #f])]))
+
 ;;; Lint
 
 (struct diagnostic ([path : Path] [message : String]) #:transparent)
@@ -760,6 +820,137 @@
            (check-run-host run)
            (seconds->string (check-run-duration run))
            (if (empty? counts) "no checks" (string-join counts ", ")))
+  (get-output-string out))
+
+;; A whole run's report, as `run-and-report` in main.rkt prints it while the
+;; checks run.
+(: render-run (-> check-run (U log-entry #f) String))
+(define (render-run run baseline)
+  (define results (check-run-results run))
+  (string-append (render-run-start (map check-result-check results))
+                 (apply string-append
+                        (for/list : (Listof String) ([result (in-list results)])
+                          (string-append "\n" (render-compared-result result baseline))))
+                 (render-run-end run baseline)))
+
+;; The brief for starting work on an arc. First the arc's state: its start
+;; metadata, the files it names and the latest log entry, inlined, and the
+;; other documents with their summaries. Then what has happened since that
+;; entry: the project's commits, the handoff repository's lint diagnostics,
+;; pending entry and uncommitted changes (`dirty`, Git's short status lines),
+;; and the checks compared against the entry's results. `run` is #f when the
+;; checks did not read. Paths are shown relative to the project.
+(: render-start (-> arc project-status (Listof String) (U check-run #f) String))
+(define (render-start arc* status dirty run)
+  (define out (open-output-string))
+  (define directory (arc-directory arc*))
+  (define (show-path [path : Path])
+    (some-system-path->string (find-relative-path (arc-project arc*) path)))
+  (define first-section? #t)
+  (define (section [name : String])
+    (unless first-section? (newline out))
+    (set! first-section? #f)
+    (fprintf out "==> ~a <==\n" name))
+  (define (inline [path : Path] [text : (U String #f)])
+    (when text
+      (section (show-path path))
+      (write-string text out)
+      (unless (or (string=? text "") (string-suffix? text "\n"))
+        (newline out))))
+  (define baseline (arc-baseline arc*))
+  (define start* (let ([start* (arc-start arc*)]) (and (start? start*) start*)))
+  (define workflow (and start* (resolve-reference arc* (start-workflow start*))))
+
+  (section (format "start, generated from ~a" (show-path (build-path directory start-file))))
+  (cond
+    [start*
+     (define (describe [scope-path : scope-path])
+       (define reference (resolve-reference arc* scope-path))
+       (define path (show-path (reference-path reference)))
+       (if (reference-exists? reference) path (format "~a (missing)" path)))
+     (fprintf out "Next:\n")
+     ;; A TOML multiline string usually ends in a newline, which would render
+     ;; as a blank line.
+     (for ([line (in-list (string-split (string-trim (start-next start*) #:left? #f) "\n" #:trim? #f))])
+       (fprintf out "  ~a\n" line))
+     (fprintf out "Workflow: ~a\n" (describe (start-workflow start*)))
+     (fprintf out "Read first:\n")
+     (when (empty? (start-read-first start*))
+       (fprintf out "  nothing\n"))
+     (for ([read (in-list (start-read-first start*))])
+       (fprintf out "- ~a: ~a\n" (describe (read-first-path read)) (read-first-reason read)))]
+    [else (fprintf out "~a did not parse; see the lint diagnostics under handoff repository status\n" start-file)])
+
+  (define state (arc-state-files arc*))
+  (inline (build-path directory (car (first state))) (cdr (first state)))
+  (when workflow
+    (inline (reference-path workflow) (arc-workflow-text arc*)))
+  (for ([file (in-list (rest state))])
+    (inline (build-path directory (car file)) (cdr file)))
+  (when baseline
+    (inline (build-path (log-entry-path directory (log-entry-number baseline)) entry-file)
+            (log-entry-entry baseline)))
+
+  ;; Each with its summary, so an agent can choose what to open, except the
+  ;; workflow, which is inlined above.
+  (section "other documents")
+  (define workflow-path (and workflow (simplify-path (reference-path workflow) #f)))
+  (define documents
+    (filter-not (λ ([document : document]) (equal? (simplify-path (document-path document) #f) workflow-path))
+                (arc-documents arc*)))
+  (when (empty? documents)
+    (fprintf out "nothing\n"))
+  (for ([document (in-list documents)])
+    (define text (document-text document))
+    (define summary (if text (document-summary text) ""))
+    (fprintf out "- ~a~a\n" (document-label document) (if (string=? summary "") "" (string-append ": " summary))))
+
+  (section "project repository status")
+  (write-string (render-project status) out)
+
+  (section "handoff repository status")
+  (fprintf out "repository: ~a\n" (show-path (arc-repository arc*)))
+  (define diagnostics (lint arc*))
+  (cond
+    [(empty? diagnostics) (fprintf out "lint: no errors\n")]
+    [else
+     (fprintf out "lint: ~a error~a\n" (length diagnostics) (if (= (length diagnostics) 1) "" "s"))
+     (for ([diagnostic (in-list diagnostics)])
+       (fprintf out "  ~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic)))])
+  (define pending (arc-pending-entry arc*))
+  (cond
+    [pending
+     (define results (log-entry-results pending))
+     (fprintf out "pending log entry: log/~a was begun with handoff update --begin but not committed, so it is not the baseline\n"
+              (log-entry-number pending))
+     (fprintf out "  results: ~a\n"
+              (if (check-run? results)
+                  (format "recorded on ~a at ~a"
+                          (check-run-host results) (timestamp->string (check-run-started results)))
+                  "none readable"))
+     (fprintf out "  entry.md: ~a\n" (if (log-entry-entry pending) "written" "not written"))]
+    [else (fprintf out "pending log entry: none\n")])
+  (cond
+    [(empty? dirty) (fprintf out "uncommitted: none\n")]
+    [else
+     (fprintf out "uncommitted, relative to the repository:\n")
+     (for ([line (in-list dirty)])
+       (fprintf out "  ~a\n" line))])
+
+  (section "checks")
+  (define previous (and baseline (log-entry-run baseline)))
+  (cond
+    [(not baseline) (fprintf out "no earlier log entry to compare against\n")]
+    [(check-run? previous) (fprintf out "compared against log/~a, recorded on ~a at ~a\n"
+                                    (log-entry-number baseline) (check-run-host previous)
+                                    (timestamp->string (check-run-started previous)))]
+    [else (fprintf out "not compared: log/~a/~a: ~a\n"
+                   (log-entry-number baseline) results-file (failure-message (assert previous failure?)))])
+  (define checks (arc-checks arc*))
+  (cond
+    [(failure? checks) (fprintf out "not run: ~a: ~a\n" checks-file (failure-message checks))]
+    [run (write-string (render-run run baseline) out)]
+    [else (error 'render-start "no run for checks that read")])
   (get-output-string out))
 
 ;; The project's branch and head now, and what happened since the baseline,

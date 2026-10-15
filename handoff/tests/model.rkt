@@ -213,7 +213,7 @@
 
 ;;; Arcs
 
-(define directory (string->path "/repository/arc"))
+(define directory (string->path "/project/.scratch/handoff/arc"))
 
 (define (run-with [ids : (Listof String)])
   (check-run "murph" 0 1.0 (branch-head "main" "abc")
@@ -226,20 +226,20 @@
   (log-entry number #t text results))
 
 (define workflow-reference
-  (reference (scope-path 'handoff (string->path "workflow.md")) (string->path "/repository/workflow.md") #t))
+  (reference (scope-path 'handoff (string->path "workflow.md")) (string->path "/project/.scratch/handoff/workflow.md") #t))
 
 ;; An arc that lint accepts, for tests to change one part of.
 (define valid
   (arc "arc"
        directory
-       (string->path "/repository")
+       (string->path "/project/.scratch/handoff")
        (string->path "/project")
        (start "Continue" (reference-scope-path workflow-reference) '())
        (list workflow-reference)
        "# Workflow\n\nHow we work.\n"
        (for/list : (Listof (Pairof String (U String #f))) ([name (in-list state-files)])
          (cons name ""))
-       (list (make-check "x" "claim" "true" 60))
+       (list (make-check "x" "holds" "true" 60))
        (list (document "arc:notes.md" (build-path directory "notes.md") "# Notes\n\nWhat we found.\n"))
        (entry-log 'directory (list (entry 1)) '() #f)))
 
@@ -287,7 +287,7 @@
 (test-case "a reference to a missing file is reported at start.toml"
   (define missing (struct-copy reference workflow-reference [exists? #f]))
   (check-equal? (lint-messages (struct-copy arc valid [references (list missing)]))
-                '(("start.toml" . "handoff:workflow.md: expected a regular file at /repository/workflow.md"))))
+                '(("start.toml" . "handoff:workflow.md: expected a regular file at /project/.scratch/handoff/workflow.md"))))
 
 (test-case "a checks file that did not read is reported at checks.toml"
   (check-equal? (lint-messages (struct-copy arc valid [checks (failure "check x is missing claim")]))
@@ -436,3 +436,173 @@
   (define text (render-project (status (cons 'since lines))))
   (check-true (string-contains? text "  c19\n  and 5 more\n"))
   (check-false (string-contains? text "c20")))
+
+;;; Updating
+
+(test-case "the next entry is the pending one"
+  (check-equal? (next-entry-number (arc-log (with-log (entry 1) (entry 2) #:pending 2))) 2))
+
+(test-case "without a pending entry, the next entry follows the highest"
+  (check-equal? (next-entry-number (arc-log (with-log (entry 1) (log-entry 4 #f #f #f)))) 5)
+  (check-equal? (next-entry-number (arc-log (with-log))) 1))
+
+(test-case "an arc without lint errors is not refused"
+  (check-false (lint-refusal valid)))
+
+(test-case "lint errors refuse with the diagnostics"
+  (check-equal? (lint-refusal (struct-copy arc valid [checks (failure "bad")]))
+                "arc has 1 lint errors:\n/project/.scratch/handoff/arc/checks.toml: bad"))
+
+;; An arc whose pending entry 2 `update --commit` accepts at `head`.
+(define head (branch-head "main" "abc"))
+(define (pending [pending-entry : log-entry]) (with-log (entry 1) pending-entry #:pending 2))
+(define committable (pending (entry 2)))
+
+(test-case "a pending entry with matching results is committed"
+  (check-false (commit-refusal committable head)))
+
+(test-case "commit refuses without a pending entry"
+  (check-equal? (commit-refusal (with-log (entry 1)) head)
+                "arc has no update in progress; run handoff update --begin first"))
+
+(test-case "commit refuses before entry.md is written"
+  (check-equal? (commit-refusal (pending (entry 2 #:entry #f)) head)
+                "write the entry to /project/.scratch/handoff/arc/log/2/entry.md first"))
+
+(test-case "commit refuses an entry without a headline"
+  (check-equal? (commit-refusal (pending (entry 2 #:entry "No heading\n")) head)
+                "the entry must open with a headline"))
+
+(test-case "commit refuses on lint errors"
+  (check-equal? (commit-refusal (struct-copy arc committable [checks (failure "bad")]) head)
+                (lint-refusal (struct-copy arc committable [checks (failure "bad")]))))
+
+(test-case "commit refuses before results are recorded"
+  (check-equal? (commit-refusal (pending (entry 2 #:results #f)) head)
+                "log/2 has no results; run handoff update --begin again"))
+
+(test-case "commit refuses when the checks changed since the results"
+  (check-equal? (commit-refusal (pending (entry 2 #:results (run-with '("y")))) head)
+                "checks.toml changed since log/2's results were recorded; run handoff update --begin again"))
+
+(test-case "commit refuses when the project moved since the results"
+  (check-equal? (commit-refusal committable (branch-head "main" "def"))
+                "the project moved from main at abc to main at def since log/2's results were recorded; run handoff update --begin again"))
+
+;;; The start brief
+
+(define unchanged (project-status (string->path "/project") head #f))
+
+(define (brief [arc* : arc] #:run [run : (U check-run #f) (run-with '("x"))])
+  (render-start arc* unchanged '() run))
+
+(test-case "a whole run renders as it streams"
+  (define run (check-run "murph" 0 1.0 head (list (result 'true) (result 'false #:id "y"))))
+  (check-equal? (render-run run #f)
+                (string-append (render-run-start (map check-result-check (check-run-results run)))
+                               "\n" (render-result (result 'true) #f #f)
+                               "\n" (render-result (result 'false #:id "y") #f #f)
+                               (render-run-end run #f))))
+
+(test-case "the brief for a valid arc"
+  (define arc* (struct-copy arc valid
+                            [state-files (for/list : (Listof (Pairof String (U String #f))) ([name (in-list state-files)])
+                                           (cons name (format "# ~a\n" name)))]))
+  (check-equal? (render-start arc* unchanged '(" M topic.md") (run-with '("x")))
+                #<<BRIEF
+==> start, generated from .scratch/handoff/arc/start.toml <==
+Next:
+  Continue
+Workflow: .scratch/handoff/workflow.md
+Read first:
+  nothing
+
+==> .scratch/handoff/arc/arc.md <==
+# arc.md
+
+==> .scratch/handoff/workflow.md <==
+# Workflow
+
+How we work.
+
+==> .scratch/handoff/arc/tasks.md <==
+# tasks.md
+
+==> .scratch/handoff/arc/do-not-reopen.md <==
+# do-not-reopen.md
+
+==> .scratch/handoff/arc/open-questions.md <==
+# open-questions.md
+
+==> .scratch/handoff/arc/review.md <==
+# review.md
+
+==> .scratch/handoff/arc/log/1/entry.md <==
+# Did a thing
+
+==> other documents <==
+- arc:notes.md: What we found.
+
+==> project repository status <==
+repository: /project
+now: main at abc
+
+==> handoff repository status <==
+repository: .scratch/handoff
+lint: no errors
+pending log entry: none
+uncommitted, relative to the repository:
+   M topic.md
+
+==> checks <==
+compared against log/1, recorded on murph at 1970-01-01T00:00:00Z
+running 1 check
+
+id: x
+claim: holds
+outcome: true
+duration: 0.5s
+
+host: murph, duration: 1.0s, summary: 1 true
+
+BRIEF
+                ))
+
+(test-case "a start file that did not read is noted, and the rest still renders"
+  (define text (brief (struct-copy arc valid [start (failure "bad")] [references '()])))
+  (check-true (string-contains? text "start.toml did not parse; see the lint diagnostics under handoff repository status\n"))
+  (check-false (string-contains? text "==> .scratch/handoff/workflow.md <=="))
+  (check-true (string-contains? text "lint: 1 error\n  .scratch/handoff/arc/start.toml: bad\n")))
+
+(test-case "a missing reference is marked"
+  (define missing (struct-copy reference workflow-reference [exists? #f]))
+  (define text (brief (struct-copy arc valid [references (list missing)] [workflow-text #f])))
+  (check-true (string-contains? text "Workflow: .scratch/handoff/workflow.md (missing)\n")))
+
+(test-case "read-first entries are listed with their reasons"
+  (define notes (reference (scope-path 'arc (string->path "notes.md")) (build-path directory "notes.md") #t))
+  (define start* (start "Continue" (reference-scope-path workflow-reference)
+                        (list (read-first (reference-scope-path notes) "the findings"))))
+  (define text (brief (struct-copy arc valid [start start*] [references (list workflow-reference notes)])))
+  (check-true (string-contains? text "Read first:\n- .scratch/handoff/arc/notes.md: the findings\n")))
+
+(test-case "the workflow is inlined rather than listed among the documents"
+  (define workflow (document "handoff:workflow.md" (reference-path workflow-reference) "# Workflow\n\nHow we work.\n"))
+  (define text (brief (struct-copy arc valid [documents (list workflow)])))
+  (check-true (string-contains? text "==> other documents <==\nnothing\n")))
+
+(test-case "a pending entry is described and is not the baseline"
+  (define text (brief (with-log (entry 1) (entry 2 #:entry #f) #:pending 2)))
+  (check-true (string-contains? text "pending log entry: log/2 was begun with handoff update --begin but not committed, so it is not the baseline\n  results: recorded on murph at 1970-01-01T00:00:00Z\n  entry.md: not written\n"))
+  (check-true (string-contains? text "compared against log/1,")))
+
+(test-case "without an earlier entry nothing is compared"
+  (check-true (string-contains? (brief (with-log)) "==> checks <==\nno earlier log entry to compare against\nrunning 1 check\n")))
+
+(test-case "a baseline without readable results is named"
+  (check-true (string-contains? (brief (with-log (entry 1 #:results (failure "run is missing host"))))
+                                "not compared: log/1/results.toml: run is missing host\n")))
+
+(test-case "checks that did not read are not run"
+  (check-true (string-suffix? (brief (struct-copy arc valid [checks (failure "bad")]) #:run #f)
+                              "==> checks <==\ncompared against log/1, recorded on murph at 1970-01-01T00:00:00Z\nnot run: checks.toml: bad\n")))
