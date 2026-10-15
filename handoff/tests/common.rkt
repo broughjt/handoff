@@ -10,7 +10,8 @@
 
 ;; A fresh handoff repository holding one empty directory, `arc`, inside a
 ;; fresh project repository, both deleted after `body` returns. Git ignores
-;; the user's configuration and commits as a fixed identity.
+;; the user's configuration, commits as a fixed identity, and runs no
+;; background maintenance.
 (: call-with-repository (All (A) (-> (-> Path A) A)))
 (define (call-with-repository body)
   (define project (make-temporary-file "handoff-test-~a" 'directory))
@@ -20,7 +21,12 @@
                                ("GIT_AUTHOR_NAME" . "Test")
                                ("GIT_AUTHOR_EMAIL" . "test@example.com")
                                ("GIT_COMMITTER_NAME" . "Test")
-                               ("GIT_COMMITTER_EMAIL" . "test@example.com")))])
+                               ("GIT_COMMITTER_EMAIL" . "test@example.com")
+                               ;; Git runs maintenance detached after a commit,
+                               ;; and its lock can vanish mid-walk in cleanup.
+                               ("GIT_CONFIG_COUNT" . "1")
+                               ("GIT_CONFIG_KEY_0" . "maintenance.auto")
+                               ("GIT_CONFIG_VALUE_0" . "false")))])
     (environment-variables-set! environment
                                 (string->bytes/utf-8 (car name+value))
                                 (string->bytes/utf-8 (cdr name+value))))
