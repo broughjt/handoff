@@ -38,7 +38,6 @@
          (struct-out check-result)
          (struct-out branch-head)
          (struct-out check-run)
-         (struct-out baseline)
          Outcome
          default-timeout
          parse-checks
@@ -61,7 +60,20 @@
          workflow-provenance
          strip-provenance
          placeholder-check-id
-         new-arc-files)
+         new-arc-files
+         (struct-out failure)
+         Read
+         (struct-out arc)
+         (struct-out reference)
+         (struct-out document)
+         (struct-out entry-log)
+         (struct-out log-entry)
+         resolve-reference
+         log-entry-run
+         arc-baseline
+         (struct-out diagnostic)
+         diagnostic->string
+         lint)
 
 ;;; Layout
 
@@ -218,10 +230,6 @@
 ;; The branch head, consisting of the branch name (`#f` when detached) and its
 ;; latest commit (`#f` before first commit).
 (struct branch-head ([branch : (U String #f)] [head : (U String #f)]) #:transparent)
-
-;; The baseline is the log entry that `handoff start` compares against, that is,
-;; the highest-numbered entry that is not pending.
-(struct baseline ([number : Exact-Positive-Integer] [run : (U check-run String)]) #:transparent)
 
 ;; Checks are an array of tables so that they are reported in file order.
 (: parse-checks (-> Table (Listof check)))
@@ -498,3 +506,157 @@
    (cons checks-file placeholder-checks)
    (for/list : (Listof (Pairof String String)) ([file+heading (in-list state-headings)])
      (cons (car file+heading) (format "# ~a\n" (or (cdr file+heading) name))))))
+
+;;; Arcs
+
+;; Why part of an arc could not be read, kept as a value so that lint can
+;; report it and start can render around it.
+(struct failure ([message : String]) #:transparent)
+(define-type (Read A) (U A failure))
+
+;; An arc as the script sees it: everything lint, start and update decide
+;; from, read once by `read-arc` in main.rkt. `references` resolves the
+;; workflow and then each read-first path of `start`, and is empty when
+;; `start` did not read; `workflow-text` is #f when the workflow is missing.
+;; Each state file is paired with its contents, #f when it is missing.
+(struct arc ([name : String]
+             [directory : Path]
+             [repository : Path]
+             [project : Path]
+             [start : (Read start)]
+             [references : (Listof reference)]
+             [workflow-text : (U String #f)]
+             [state-files : (Listof (Pairof String (U String #f)))]
+             [checks : (Read (Listof check))]
+             [documents : (Listof document)]
+             [log : entry-log])
+  #:transparent)
+
+;; A scope path from start.toml, resolved on this machine.
+(struct reference ([scope-path : scope-path] [path : Path] [exists? : Boolean]) #:transparent)
+
+;; A file or directory beside the arc's layout, or a Markdown file at the
+;; handoff repository's root other than a verbatim workflow copy. `label` is
+;; its scoped name, with a trailing slash for a directory, and `text` is #f for
+;; anything but a Markdown file.
+(struct document ([label : String] [path : Path] [text : (U String #f)]) #:transparent)
+
+;; The arc's log directory. `entries` are ascending by number, `invalid` are
+;; the names that are not entry numbers, and `pending` is the number of the
+;; pending entry, which only Git can decide.
+(struct entry-log ([shape : (U 'absent 'directory 'not-a-directory)]
+                   [entries : (Listof log-entry)]
+                   [invalid : (Listof String)]
+                   [pending : (U Exact-Positive-Integer #f)])
+  #:transparent)
+
+;; `entry` is the text of entry.md, and `results` is #f when results.toml is
+;; missing.
+(struct log-entry ([number : Exact-Positive-Integer]
+                   [directory? : Boolean]
+                   [entry : (U String #f)]
+                   [results : (U check-run failure #f)])
+  #:transparent)
+
+;; Where `scope-path` resolves in `arc*`. Every scope path in the arc's start
+;; is among its references.
+(: resolve-reference (-> arc scope-path reference))
+(define (resolve-reference arc* scope-path)
+  (or (findf (λ ([reference : reference]) (equal? (reference-scope-path reference) scope-path))
+             (arc-references arc*))
+      (error 'resolve-reference "~a is not a reference of ~a" (scope-path->string scope-path) (arc-name arc*))))
+
+;; An entry's results, with a missing file as a failure.
+(: log-entry-run (-> log-entry (Read check-run)))
+(define (log-entry-run entry)
+  (or (log-entry-results entry) (failure "expected a regular file")))
+
+;; The log entry start compares against: the highest-numbered entry that is
+;; not pending. An entry without readable results is still the baseline, so
+;; that a broken entry is reported rather than skipped for an older one.
+(: arc-baseline (-> arc (U log-entry #f)))
+(define (arc-baseline arc*)
+  (define log (arc-log arc*))
+  (define complete
+    (filter (λ ([entry : log-entry]) (not (eqv? (log-entry-number entry) (entry-log-pending log))))
+            (entry-log-entries log)))
+  (and (pair? complete) (last complete)))
+
+;;; Lint
+
+(struct diagnostic ([path : Path] [message : String]) #:transparent)
+
+(: diagnostic->string (-> diagnostic String))
+(define (diagnostic->string diagnostic)
+  (format "~a: ~a" (diagnostic-path diagnostic) (diagnostic-message diagnostic)))
+
+;; What is wrong with the arc, in the order of its layout.
+(: lint (-> arc (Listof diagnostic)))
+(define (lint arc*)
+  (define directory (arc-directory arc*))
+  (define start-path (build-path directory start-file))
+  (define checks-path (build-path directory checks-file))
+  (define checks (arc-checks arc*))
+  (append
+   ;; Each of the state files exists
+   (for/list : (Listof diagnostic) ([file (in-list (arc-state-files arc*))]
+                                    #:unless (cdr file))
+     (diagnostic (build-path directory (car file)) "expected a regular file"))
+   ;; start.toml reads, and each of its references names a file that exists
+   (failure-diagnostics start-path (arc-start arc*))
+   (for/list : (Listof diagnostic) ([reference (in-list (arc-references arc*))]
+                                    #:unless (reference-exists? reference))
+     (diagnostic start-path (format "~a: expected a regular file at ~a"
+                                    (scope-path->string (reference-scope-path reference))
+                                    (reference-path reference))))
+   ;; checks.toml reads, and no longer holds the placeholder from `handoff new`
+   (failure-diagnostics checks-path checks)
+   (if (and (list? checks)
+            (memf (λ ([check : check]) (equal? (check-id check) placeholder-check-id)) checks))
+       (list (diagnostic checks-path
+                         (format "check ~a is the placeholder from handoff new; replace it with the arc's checks"
+                                 placeholder-check-id)))
+       null)
+   ;; Every document start lists with a summary has one
+   (for*/list : (Listof diagnostic) ([document (in-list (arc-documents arc*))]
+                                     [text (in-value (document-text document))]
+                                     #:when text
+                                     [issue (in-value (summary-issue text))]
+                                     #:when issue)
+     (diagnostic (document-path document) issue))
+   (lint-log directory (arc-log arc*))))
+
+(: failure-diagnostics (-> Path Any (Listof diagnostic)))
+(define (failure-diagnostics path read)
+  (if (failure? read) (list (diagnostic path (failure-message read))) null))
+
+;; The log path either does not exist or is a directory, and every entry in it
+;; is a directory named a positive integer with no leading zeros, holding an
+;; entry.md file and a results.toml file in the format `check-run->toml`
+;; writes. The pending entry may lack either file.
+(: lint-log (-> Path entry-log (Listof diagnostic)))
+(define (lint-log directory log)
+  (define log-path (build-path directory log-directory))
+  (case (entry-log-shape log)
+    [(absent) null]
+    [(not-a-directory) (list (diagnostic log-path "expected a directory"))]
+    [else
+     (append
+      (append*
+       (for/list : (Listof (Listof diagnostic)) ([entry (in-list (entry-log-entries log))])
+         (define path (log-entry-path directory (log-entry-number entry)))
+         (define pending? (eqv? (log-entry-number entry) (entry-log-pending log)))
+         (define results (log-entry-results entry))
+         (cond
+           [(not (log-entry-directory? entry)) (list (diagnostic path "expected a directory"))]
+           [else
+            (append
+             (if (or pending? (log-entry-entry entry))
+                 null
+                 (list (diagnostic (build-path path entry-file) "expected a regular file")))
+             (if (and pending? (not results))
+                 null
+                 (failure-diagnostics (build-path path results-file) (log-entry-run entry))))])))
+      (for/list : (Listof diagnostic) ([name (in-list (entry-log-invalid log))])
+        (diagnostic (build-path log-path name)
+                    "expected a log entry number, a positive integer without leading zeros")))]))

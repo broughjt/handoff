@@ -251,33 +251,11 @@
 
 (: handle-lint (-> Path String Status))
 (define (handle-lint repository arc)
-  (define diagnostics (lint-arc (build-path repository arc) repository))
+  (define diagnostics (lint (read-arc (build-path repository arc) repository)))
   (for ([diagnostic (in-list diagnostics)])
     (displayln (diagnostic->string diagnostic)))
   (printf "~a: ~a lint errors\n" arc (length diagnostics))
   (if (empty? diagnostics) 'success 'failure))
-
-;; The documents an agent may open beyond the ones start inlines, as
-;; references with paths: the arc's files and directories beside its layout,
-;; then the Markdown files at the handoff repository's root other than verbatim
-;; workflow copies, which are the shared topic documents.
-(: arc-documents (-> Path Path (Listof (Pairof String Path))))
-(define (arc-documents arc repository)
-  (define layout (map string->path (list* start-file checks-file log-directory state-files)))
-  (define (names [directory : Path]) (sort (directory-list directory) path<?))
-  (append
-   (for/list : (Listof (Pairof String Path)) ([name (in-list (names arc))]
-                                              #:unless (member name layout))
-     (define path (build-path arc name))
-     (cons (format "arc:~a" (if (directory-exists? path) (path->directory-path name) name)) path))
-   (for/list : (Listof (Pairof String Path)) ([name (in-list (names repository))]
-                                              #:when (markdown-file? (build-path repository name))
-                                              #:unless (verbatim-copy? (file->string (build-path repository name))))
-     (cons (format "handoff:~a" name) (build-path repository name)))))
-
-(: markdown-file? (-> Path Boolean))
-(define (markdown-file? path)
-  (and (file-exists? path) (path-has-extension? path #".md")))
 
 ;; Brief an agent to start work on a handoff arc. First the arc's state: its
 ;; start metadata, the files it names and the latest log entry, inlined, and
@@ -297,26 +275,19 @@
     (unless first-section? (newline))
     (set! first-section? #f)
     (printf "==> ~a <==\n" name))
-  (define (inline [path : Path])
-    (when (file-exists? path)
-      (section (show-path path))
-      (define text (file->string path))
-      (write-string text)
-      (unless (or (string=? text "") (string-suffix? text "\n"))
-        (newline))))
-  (define baseline (find-baseline arc-path))
+  (define arc* (read-arc arc-path repository))
+  (define baseline (arc-baseline arc*))
 
   (define start-path (build-path arc-path start-file))
   (section (format "start, generated from ~a" (show-path start-path)))
-  (define start*
-    (with-handlers ([exn:fail:handoff? (const #f)])
-      (parse-start (read-toml start-path))))
+  (define start* (let ([start* (arc-start arc*)]) (and (start? start*) start*)))
   (define (resolve [scope-path : scope-path])
-    (resolve-scope-path scope-path #:arc arc-path #:repository repository #:project project))
+    (resolve-reference arc* scope-path))
   (cond
     [start*
-     (define (describe [path : Path])
-       (if (file-exists? path) (show-path path) (format "~a (missing)" (show-path path))))
+     (define (describe [reference : reference])
+       (define path (show-path (reference-path reference)))
+       (if (reference-exists? reference) path (format "~a (missing)" path)))
      (printf "Next:\n")
      ;; A TOML multiline string usually ends in a newline, which would render
      ;; as a blank line.
@@ -330,47 +301,55 @@
        (printf "- ~a: ~a\n" (describe (resolve (read-first-path read))) (read-first-reason read)))]
     [else (printf "~a did not parse; see the lint diagnostics under handoff repository status\n" start-file)])
 
+  (define (inline [path : Path] [text : (U String #f)])
+    (when text
+      (section (show-path path))
+      (write-string text)
+      (unless (or (string=? text "") (string-suffix? text "\n"))
+        (newline))))
   (define-values (arc-file other-state-files)
-    (values (first state-files) (rest state-files)))
-  (inline (build-path arc-path arc-file))
+    (values (first (arc-state-files arc*)) (rest (arc-state-files arc*))))
+  (inline (build-path arc-path (car arc-file)) (cdr arc-file))
   (when start*
-    (inline (resolve (start-workflow start*))))
-  (for ([name (in-list other-state-files)])
-    (inline (build-path arc-path name)))
+    (inline (reference-path (resolve (start-workflow start*))) (arc-workflow-text arc*)))
+  (for ([file (in-list other-state-files)])
+    (inline (build-path arc-path (car file)) (cdr file)))
   (when baseline
-    (inline (build-path (log-entry-path arc-path (baseline-number baseline)) entry-file)))
+    (inline (build-path (log-entry-path arc-path (log-entry-number baseline)) entry-file)
+            (log-entry-entry baseline)))
 
   ;; Each with its summary, so an agent can choose what to open, except the
   ;; workflow, which is inlined above.
   (section "other documents")
-  (define workflow-path (and start* (simplify-path (resolve (start-workflow start*)))))
+  (define workflow-path (and start* (simplify-path (reference-path (resolve (start-workflow start*))) #f)))
   (define documents
-    (filter-not (λ ([document : (Pairof String Path)]) (equal? (simplify-path (cdr document)) workflow-path))
-            (arc-documents arc-path repository)))
+    (filter-not (λ ([document : document]) (equal? (simplify-path (document-path document) #f) workflow-path))
+                (arc-documents arc*)))
   (when (empty? documents)
     (printf "nothing\n"))
   (for ([document (in-list documents)])
-    (define summary (if (markdown-file? (cdr document)) (document-summary (file->string (cdr document))) ""))
-    (printf "- ~a~a\n" (car document) (if (string=? summary "") "" (string-append ": " summary))))
+    (define text (document-text document))
+    (define summary (if text (document-summary text) ""))
+    (printf "- ~a~a\n" (document-label document) (if (string=? summary "") "" (string-append ": " summary))))
 
   (section "project repository status")
   (report-project project baseline)
 
   (section "handoff repository status")
   (printf "repository: ~a\n" (show-path repository))
-  (define diagnostics (lint-arc arc-path repository))
+  (define diagnostics (lint arc*))
   (cond
     [(empty? diagnostics) (printf "lint: no errors\n")]
     [else
      (printf "lint: ~a error~a\n" (length diagnostics) (if (= (length diagnostics) 1) "" "s"))
      (for ([diagnostic (in-list diagnostics)])
        (printf "  ~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic)))])
-  (define pending (pending-log-entry arc-path))
+  (define pending (entry-log-pending (arc-log arc*)))
   (cond
     [pending
-     (define entry-path (log-entry-path arc-path pending))
-     (define run (with-handlers ([exn:fail:handoff? (const #f)])
-                   (parse-check-run (read-toml (build-path entry-path results-file)))))
+     (define entry (assert (findf (λ ([entry : log-entry]) (= (log-entry-number entry) pending))
+                                  (entry-log-entries (arc-log arc*)))))
+     (define run (let ([run (log-entry-results entry)]) (and (check-run? run) run)))
      (printf "pending log entry: log/~a was begun with handoff update --begin but not committed, so it is not the baseline\n"
              pending)
      (printf "  results: ~a\n"
@@ -378,7 +357,7 @@
                  (format "recorded on ~a at ~a"
                          (check-run-host run) (timestamp->string (check-run-started run)))
                  "none readable"))
-     (printf "  entry.md: ~a\n" (if (file-exists? (build-path entry-path entry-file)) "written" "not written"))]
+     (printf "  entry.md: ~a\n" (if (log-entry-entry entry) "written" "not written"))]
     [else (printf "pending log entry: none\n")])
   ;; Without --no-optional-locks, status may refresh and rewrite the index.
   (define dirty (string-split (git repository "--no-optional-locks" "status" "--porcelain") "\n"))
@@ -390,19 +369,17 @@
        (printf "  ~a\n" line))])
 
   (section "checks")
-  (define previous (and baseline (baseline-results baseline)))
+  (define previous (and baseline (log-entry-run baseline)))
   (cond
     [(not baseline) (printf "no earlier log entry to compare against\n")]
-    [previous (printf "compared against log/~a, recorded on ~a at ~a\n"
-                      (baseline-number baseline) (check-run-host previous)
-                      (timestamp->string (check-run-started previous)))]
+    [(check-run? previous) (printf "compared against log/~a, recorded on ~a at ~a\n"
+                                   (log-entry-number baseline) (check-run-host previous)
+                                   (timestamp->string (check-run-started previous)))]
     [else (printf "not compared: log/~a/~a: ~a\n"
-                  (baseline-number baseline) results-file (baseline-run baseline))])
-  (define checks
-    (with-handlers ([exn:fail:handoff? exn-message])
-      (parse-checks (read-toml (build-path arc-path checks-file)))))
+                  (log-entry-number baseline) results-file (failure-message (assert previous failure?)))])
+  (define checks (arc-checks arc*))
   (cond
-    [(string? checks) (printf "not run: ~a: ~a\n" checks-file checks)]
+    [(failure? checks) (printf "not run: ~a: ~a\n" checks-file (failure-message checks))]
     [else (void (run-and-report checks project #:baseline baseline))])
   'success)
 
@@ -410,14 +387,14 @@
 (define commit-limit 20)
 
 ;; Compare the project's branch and head with those recorded in the baseline.
-(: report-project (-> Path (U baseline #f) Void))
+(: report-project (-> Path (U log-entry #f) Void))
 (define (report-project project baseline)
   (define current (project-branch-head project))
-  (define earlier (and baseline (baseline-results baseline)))
+  (define earlier (and baseline (let ([run (log-entry-results baseline)]) (and (check-run? run) run))))
   (printf "repository: ~a\n" project)
   (printf "now: ~a\n" (describe-branch-head current))
   (when (and baseline earlier)
-    (define number (baseline-number baseline))
+    (define number (log-entry-number baseline))
     (define recorded (check-run-project-head earlier))
     (printf "at log/~a: ~a\n" number (describe-branch-head recorded))
     (unless (equal? (branch-head-branch recorded) (branch-head-branch current))
@@ -587,7 +564,7 @@
             (cond [copied (format " (copied from ~a)" copied)]
                   [found " (existing)"]
                   [else ""])))
-  (define diagnostics (lint-arc arc-path repository))
+  (define diagnostics (lint (read-arc arc-path repository)))
   (printf "lint, until the arc is written:\n")
   (for ([diagnostic (in-list diagnostics)])
     (printf "  ~a\n" (diagnostic->string diagnostic)))
@@ -632,7 +609,7 @@
 
 (: refuse-lint-errors (-> Path String Void))
 (define (refuse-lint-errors repository arc)
-  (define diagnostics (lint-arc (build-path repository arc) repository))
+  (define diagnostics (lint (read-arc (build-path repository arc) repository)))
   (unless (empty? diagnostics)
     (raise-handoff-error "~a has ~a lint errors:\n~a"
                          arc (length diagnostics)
@@ -642,11 +619,11 @@
 ;; as soon as it and every check before it in file order have finished, so
 ;; that the output does not depend on timing. Note each result's change since
 ;; `baseline` when that has results, then summarize the run.
-(: run-and-report (->* ((Listof check) Path) (#:baseline (U baseline #f)) check-run))
+(: run-and-report (->* ((Listof check) Path) (#:baseline (U log-entry #f)) check-run))
 (define (run-and-report checks project #:baseline [baseline #f])
-  (define previous (let ([run (and baseline (baseline-results baseline))])
-                     (if run (check-run-results run) null)))
-  (define number (and baseline (baseline-number baseline)))
+  (define previous (let ([run (and baseline (log-entry-results baseline))])
+                     (if (check-run? run) (check-run-results run) null)))
+  (define number (and baseline (log-entry-number baseline)))
   (printf "running ~a ~a\n" (length checks) (if (= (length checks) 1) "check" "checks"))
   (flush-output)
   (define run
@@ -718,94 +695,90 @@
 (define (seconds->string duration)
   (string-append (~r duration #:precision '(= 1)) "s"))
 
-;;; Lint
-
-(struct diagnostic ([path : Path] [message : String]) #:transparent)
-
-(: diagnostic->string (-> diagnostic String))
-(define (diagnostic->string diagnostic)
-  (format "~a: ~a"
-          (diagnostic-path diagnostic)
-          (diagnostic-message diagnostic)))
+;;; Reading an arc
 
 (: lint-arc (-> Path Path (Listof diagnostic)))
-(define (lint-arc arc repository)
-  (define diagnostics : (Listof diagnostic) null)
-  (define (report! [path : Path] [message : String])
-    (set! diagnostics (cons (diagnostic path message) diagnostics)))
-  (define ((report-error [path : Path]) [error : exn])
-    (report! path (exn-message error)))
+(define (lint-arc directory repository)
+  (lint (read-arc directory repository)))
 
-  ;; Each of the state files exists
-  (for ([name (in-list state-files)])
-    (define path (build-path arc name))
-    (unless (file-exists? path)
-      (report! path "expected a regular file")))
-
-  ;; The start.toml file exists, parses in the expected format, and each of the
-  ;; scoped path references point to files that exist
-  (define start-path (build-path arc start-file))
+;; Read everything about the arc at `directory` that lint, start and update
+;; decide from. A file that does not parse is kept as a failure.
+(: read-arc (-> Path Path arc))
+(define (read-arc directory repository)
   (define project (find-project-repository repository))
-  (define start*
-    (with-handlers ([exn:fail:handoff? (report-error start-path)])
-      (parse-start (read-toml start-path))))
-  (when (start? start*)
-    (for ([scope-path (in-list (cons (start-workflow start*) (map read-first-path (start-read-first start*))))])
-      (define path (resolve-scope-path scope-path #:arc arc #:repository repository #:project project))
-      (unless (file-exists? path)
-        (report! start-path (format "~a: expected a regular file at ~a" (scope-path->string scope-path) path)))))
+  (define-values (_base name _directory?) (split-path directory))
+  (define start* (read-part (λ () (parse-start (read-toml (build-path directory start-file))))))
+  (define references
+    (if (start? start*)
+        (for/list : (Listof reference) ([scope-path (in-list (cons (start-workflow start*)
+                                                                   (map read-first-path (start-read-first start*))))])
+          (define path (resolve-scope-path scope-path #:arc directory #:repository repository #:project project))
+          (reference scope-path path (file-exists? path)))
+        null))
+  (define workflow (and (pair? references) (first references)))
+  (arc (path->string (assert name path?))
+       directory
+       repository
+       project
+       start*
+       references
+       (and workflow (reference-exists? workflow) (file->string (reference-path workflow)))
+       (for/list : (Listof (Pairof String (U String #f))) ([name (in-list state-files)])
+         (define path (build-path directory name))
+         (cons name (and (file-exists? path) (file->string path))))
+       (read-part (λ () (parse-checks (read-toml (build-path directory checks-file)))))
+       (read-documents directory repository)
+       (read-log directory)))
 
-  ;; The checks.toml exists, parses in the expected format, and no longer holds
-  ;; the placeholder check from `handoff new`.
-  (define checks-path (build-path arc checks-file))
-  (define checks
-    (with-handlers ([exn:fail:handoff? (report-error checks-path)])
-      (parse-checks (read-toml checks-path))))
-  (when (and (list? checks)
-             (memf (λ ([check : check]) (equal? (check-id check) placeholder-check-id)) checks))
-    (report! checks-path (format "check ~a is the placeholder from handoff new; replace it with the arc's checks"
-                                 placeholder-check-id)))
+(: read-part (All (A) (-> (-> A) (Read A))))
+(define (read-part read)
+  (with-handlers ([exn:fail:handoff? (λ ([error : exn]) (failure (exn-message error)))])
+    (read)))
 
-  ;; Every document start lists with a summary has one
-  (for ([document (in-list (arc-documents arc repository))]
-        #:when (markdown-file? (cdr document)))
-    (define issue (summary-issue (file->string (cdr document))))
-    (when issue
-      (report! (cdr document) issue)))
+;; The documents an agent may open beyond the ones start inlines: the arc's
+;; files and directories beside its layout, then the Markdown files at the
+;; handoff repository's root other than verbatim workflow copies, which are
+;; the shared topic documents.
+(: read-documents (-> Path Path (Listof document)))
+(define (read-documents directory repository)
+  (define layout (map string->path (list* start-file checks-file log-directory state-files)))
+  (define (names [directory : Path]) (sort (directory-list directory) path<?))
+  (define (markdown [path : Path])
+    (and (file-exists? path) (path-has-extension? path #".md") (file->string path)))
+  (append
+   (for/list : (Listof document) ([name (in-list (names directory))]
+                                  #:unless (member name layout))
+     (define path (build-path directory name))
+     (document (format "arc:~a" (if (directory-exists? path) (path->directory-path name) name))
+               path
+               (markdown path)))
+   (for*/list : (Listof document) ([name (in-list (names repository))]
+                                   [path (in-value (build-path repository name))]
+                                   [text (in-value (markdown path))]
+                                   #:when text
+                                   #:unless (verbatim-copy? text))
+     (document (format "handoff:~a" name) path text))))
 
-  ;; - The log path either does not exist or is a directory
-  ;; - Every entry is a directory named a positive integer with no leading
-  ;;   zeros, such that:
-  ;;   - It contains an entry.md file and a results.toml file, except that the
-  ;;     pending entry (whose number is the output of `pending-log-entry`) may
-  ;;     lack either.
-  ;;   - Its results.toml, when present, is in the format written by
-  ;;     `check-run->toml`.
-  (define log (build-path arc log-directory))
-  (cond
-    [(not (or (file-exists? log) (directory-exists? log) (link-exists? log))) (void)]
-    [(not (directory-exists? log)) (report! log "expected a directory")]
-    [else
-     (define-values (entries invalid) (list-log-entries arc))
-     (define pending (pending-log-entry arc))
-     (for ([number (in-list entries)])
-       (define entry (log-entry-path arc number))
-       (define pending? (eqv? number pending))
-       (cond
-         [(not (directory-exists? entry)) (report! entry "expected a directory")]
-         [else
-          (define entry-path (build-path entry entry-file))
-          (unless (or pending? (file-exists? entry-path))
-            (report! entry-path "expected a regular file"))
-          (define results-path (build-path entry results-file))
-          (unless (and pending? (not (file-exists? results-path)))
-            (with-handlers ([exn:fail:handoff? (report-error results-path)])
-              (parse-check-run (read-toml results-path))))]))
-     (for ([name (in-list invalid)])
-       (report! (build-path log name)
-                "expected a log entry number, a positive integer without leading zeros"))])
-
-  (reverse diagnostics))
+(: read-log (-> Path entry-log))
+(define (read-log directory)
+  (define log (build-path directory log-directory))
+  (define-values (numbers invalid) (list-log-entries directory))
+  (entry-log
+   (cond
+     [(directory-exists? log) 'directory]
+     [(or (file-exists? log) (link-exists? log)) 'not-a-directory]
+     [else 'absent])
+   (for/list : (Listof log-entry) ([number (in-list numbers)])
+     (define path (log-entry-path directory number))
+     (define entry-path (build-path path entry-file))
+     (define results-path (build-path path results-file))
+     (log-entry number
+                (directory-exists? path)
+                (and (file-exists? entry-path) (file->string entry-path))
+                (and (file-exists? results-path)
+                     (read-part (λ () (parse-check-run (read-toml results-path)))))))
+   invalid
+   (pending-log-entry directory)))
 
 ;;; Running checks
 
@@ -1063,26 +1036,6 @@
   (define-values (numbered invalid) (partition parse-log-entry-name names))
   (values (sort (map (λ ([name : String]) (assert (parse-log-entry-name name))) numbered) <)
           (sort invalid string<?)))
-
-(: baseline-results (-> baseline (U check-run #f)))
-(define (baseline-results baseline)
-  (define run (baseline-run baseline))
-  (and (check-run? run) run))
-
-;; A latest complete entry without readable results is still the baseline,
-;; so that a broken entry is reported rather than skipped for an older one.
-(: find-baseline (-> Path (U baseline #f)))
-(define (find-baseline arc)
-  (define-values (numbers _invalid) (list-log-entries arc))
-  (define pending (pending-log-entry arc))
-  (define complete (filter (λ ([number : Exact-Positive-Integer]) (not (eqv? number pending))) numbers))
-  (and (pair? complete)
-       (let ([number (last complete)])
-         (baseline
-          number
-          (with-handlers ([exn:fail:handoff? exn-message])
-            (define results-path (build-path (log-entry-path arc number) results-file))
-            (parse-check-run (read-toml results-path)))))))
 
 ;; Get the number of the update in progress, which is the highest-numbered log
 ;; entry not yet in the handoff repository's HEAD (#f if this does not exist).

@@ -2,6 +2,7 @@
 ;; The file formats, parsed and written without running anything.
 
 (require racket/list
+         racket/path
          racket/string
          typed/rackunit
          (rename-in "../model.rkt" [check make-check])
@@ -209,3 +210,120 @@
     (check-equal? (strip-provenance (format "<!-- ~a -->\n# W\n" how)) "# W\n" how))
   (for ([text (in-list '("# W\n" "<!-- a note -->\n# W\n" "# W\n<!-- copied from x -->\n"))])
     (check-equal? (strip-provenance text) text text)))
+
+;;; Arcs
+
+(define directory (string->path "/repository/arc"))
+
+(define (run-with [ids : (Listof String)])
+  (check-run "murph" 0 1.0 (branch-head "main" "abc")
+             (for/list ([id (in-list ids)])
+               (check-result (make-check id "claim" "true" 60) 'true 0.5 "" 0 0))))
+
+(define (entry [number : Exact-Positive-Integer]
+               #:entry [text : (U String #f) "# Did a thing\n"]
+               #:results [results : (U check-run failure #f) (run-with '("x"))])
+  (log-entry number #t text results))
+
+(define workflow-reference
+  (reference (scope-path 'handoff (string->path "workflow.md")) (string->path "/repository/workflow.md") #t))
+
+;; An arc that lint accepts, for tests to change one part of.
+(define valid
+  (arc "arc"
+       directory
+       (string->path "/repository")
+       (string->path "/project")
+       (start "Continue" (reference-scope-path workflow-reference) '())
+       (list workflow-reference)
+       "# Workflow\n\nHow we work.\n"
+       (for/list : (Listof (Pairof String (U String #f))) ([name (in-list state-files)])
+         (cons name ""))
+       (list (make-check "x" "claim" "true" 60))
+       (list (document "arc:notes.md" (build-path directory "notes.md") "# Notes\n\nWhat we found.\n"))
+       (entry-log 'directory (list (entry 1)) '() #f)))
+
+(define (with-log #:shape [shape : (U 'absent 'directory 'not-a-directory) 'directory]
+                  #:pending [pending : (U Exact-Positive-Integer #f) #f]
+                  #:invalid [invalid : (Listof String) '()]
+                  . [entries : log-entry *])
+  (struct-copy arc valid [log (entry-log shape entries invalid pending)]))
+
+(define (lint-messages [arc* : arc])
+  (for/list : (Listof (Pairof String String)) ([diagnostic (in-list (lint arc*))])
+    (cons (some-system-path->string (find-relative-path directory (diagnostic-path diagnostic)))
+          (diagnostic-message diagnostic))))
+
+(test-case "a reference resolves to the arc's resolution of it"
+  (check-equal? (resolve-reference valid (reference-scope-path workflow-reference)) workflow-reference))
+
+(test-case "the baseline is the highest-numbered entry that is not pending"
+  (check-equal? (arc-baseline (with-log (entry 1) (entry 2) (entry 3) #:pending 3)) (entry 2)))
+
+(test-case "there is no baseline when the only entry is pending"
+  (check-false (arc-baseline (with-log (entry 1) #:pending 1))))
+
+(test-case "an entry with unreadable results is still the baseline"
+  (check-equal? (arc-baseline (with-log (entry 1) (entry 2 #:results (failure "bad"))))
+                (entry 2 #:results (failure "bad"))))
+
+(test-case "a missing results file reads as a failure"
+  (check-equal? (log-entry-run (entry 1 #:results #f)) (failure "expected a regular file")))
+
+;;; Lint
+
+(test-case "a valid arc has no diagnostics"
+  (check-equal? (lint valid) '()))
+
+(test-case "a missing state file is reported"
+  (define state (list* (cons "arc.md" #f) (rest (arc-state-files valid))))
+  (check-equal? (lint-messages (struct-copy arc valid [state-files state]))
+                '(("arc.md" . "expected a regular file"))))
+
+(test-case "a start file that did not read is reported at start.toml"
+  (check-equal? (lint-messages (struct-copy arc valid [start (failure "start is missing next")] [references '()]))
+                '(("start.toml" . "start is missing next"))))
+
+(test-case "a reference to a missing file is reported at start.toml"
+  (define missing (struct-copy reference workflow-reference [exists? #f]))
+  (check-equal? (lint-messages (struct-copy arc valid [references (list missing)]))
+                '(("start.toml" . "handoff:workflow.md: expected a regular file at /repository/workflow.md"))))
+
+(test-case "a checks file that did not read is reported at checks.toml"
+  (check-equal? (lint-messages (struct-copy arc valid [checks (failure "check x is missing claim")]))
+                '(("checks.toml" . "check x is missing claim"))))
+
+(test-case "the placeholder check is reported"
+  (check-equal? (lint-messages (struct-copy arc valid [checks (list (make-check "replace-me" "c" "exit 3" 60))]))
+                '(("checks.toml" . "check replace-me is the placeholder from handoff new; replace it with the arc's checks"))))
+
+(test-case "a Markdown document without a summary is reported, and other documents are not read"
+  (define documents (list (document "arc:notes.md" (build-path directory "notes.md") "# Notes\n\n- a list\n")
+                          (document "arc:data/" (build-path directory "data") #f)))
+  (check-equal? (lint-messages (struct-copy arc valid [documents documents]))
+                '(("notes.md" . "expected a summary, a paragraph of prose after the opening headings, not a list, code block, table or HTML"))))
+
+(test-case "an absent log is accepted"
+  (check-equal? (lint (with-log #:shape 'absent)) '()))
+
+(test-case "a log that is not a directory is reported"
+  (check-equal? (lint-messages (with-log #:shape 'not-a-directory)) '(("log" . "expected a directory"))))
+
+(test-case "an entry that is not a directory is reported"
+  (check-equal? (lint-messages (with-log (log-entry 1 #f #f #f))) '(("log/1" . "expected a directory"))))
+
+(test-case "a complete entry needs entry.md and results.toml"
+  (check-equal? (lint-messages (with-log (entry 1 #:entry #f #:results #f)))
+                '(("log/1/entry.md" . "expected a regular file")
+                  ("log/1/results.toml" . "expected a regular file"))))
+
+(test-case "the pending entry may lack entry.md and results.toml"
+  (check-equal? (lint (with-log (entry 1) (entry 2 #:entry #f #:results #f) #:pending 2)) '()))
+
+(test-case "unreadable results are reported, even in the pending entry"
+  (check-equal? (lint-messages (with-log (entry 1 #:results (failure "run is missing host")) #:pending 1))
+                '(("log/1/results.toml" . "run is missing host"))))
+
+(test-case "a log entry name that is not an entry number is reported"
+  (check-equal? (lint-messages (with-log (entry 1) #:invalid '("01")))
+                '(("log/01" . "expected a log entry number, a positive integer without leading zeros"))))
