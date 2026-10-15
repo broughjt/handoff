@@ -110,7 +110,7 @@
   (call-with-start-arc
    (λ ([repository : Path] [arc : Path] [project : Path])
      (write-file (build-path arc "start.toml")
-                 "next = \"\"\"\nFirst line.\n\nSecond paragraph.\n\"\"\"\nworkflow = \"handoff:shared.md\"\nread_first = []\n")
+                 "next = \"\"\"\nFirst line.\n\nSecond paragraph.\n\"\"\"\nworkflow = \"handoff:shared.md\"\nread-first = []\n")
      (check-contains (start! repository) "Next:\n  First line.\n  \n  Second paragraph.\nWorkflow: "))))
 
 (test-case "lint diagnostics are reported, and whatever parses is still rendered"
@@ -118,7 +118,7 @@
    (λ ([repository : Path] [arc : Path] [project : Path])
      (delete-file (build-path arc "review.md"))
      (write-file (build-path arc "start.toml")
-                 "next = \"Go\"\nworkflow = \"arc:missing.md\"\nread_first = [{ path = \"project:gone.rkt\", reason = \"Entry\" }]\n")
+                 "next = \"Go\"\nworkflow = \"arc:missing.md\"\nread-first = [{ path = \"project:gone.rkt\", reason = \"Entry\" }]\n")
      (define output (start! repository))
      (check-contains output
                      "lint: 3 errors\n  .scratch/handoff/arc/review.md: expected a regular file\n"

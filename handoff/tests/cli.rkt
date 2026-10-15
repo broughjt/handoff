@@ -236,7 +236,7 @@ TOML
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
      (write-file (build-path arc "start.toml")
-                 "next = \"Continue\"\nworkflow = \"arc:missing.md\"\n[[read_first]]\npath = \"handoff:also-missing.md\"\nreason = \"Context\"\n")
+                 "next = \"Continue\"\nworkflow = \"arc:missing.md\"\n[[read-first]]\npath = \"handoff:also-missing.md\"\nreason = \"Context\"\n")
      (define diagnostics (lint-arc arc repository))
      (check-equal? (length diagnostics) 2)
      (check-equal? (remove-duplicates (map diagnostic-path diagnostics)) (list (build-path arc "start.toml"))))))
@@ -245,7 +245,7 @@ TOML
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
      (write-file (build-path arc "start.toml")
-                 "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\n[[read_first]]\npath = \"project:source.rkt\"\nreason = \"Context\"\n")
+                 "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\n[[read-first]]\npath = \"project:source.rkt\"\nreason = \"Context\"\n")
      (check-equal? (length (lint-arc arc repository)) 1)
      (write-file (build-path repository 'up 'up "source.rkt") "")
      (check-equal? (lint-arc arc repository) '())

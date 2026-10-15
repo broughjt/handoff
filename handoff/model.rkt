@@ -126,14 +126,14 @@
 
 (: parse-start (-> Table start))
 (define (parse-start table)
-  (expect-fields table (list 'next 'workflow 'read_first) null "start")
-  (define reads (hash-ref table 'read_first))
+  (expect-fields table (list 'next 'workflow 'read-first) null "start")
+  (define reads (hash-ref table 'read-first))
   (unless (list? reads)
-    (raise-handoff-error "read_first must be an array of tables"))
+    (raise-handoff-error "read-first must be an array of tables"))
   (start (expect-non-empty-string table 'next "start")
          (parse-scope-path (expect-non-empty-string table 'workflow "start"))
          (for/list ([entry (in-list reads)] [index (in-naturals)])
-           (define context (format "read_first[~a]" index))
+           (define context (format "read-first[~a]" index))
            (define read (expect-table entry context))
            (expect-fields read (list 'path 'reason) null context)
            (read-first (parse-scope-path (expect-non-empty-string read 'path context))
@@ -494,7 +494,7 @@
 (define (new-arc-files name workflow)
   (list*
    (cons start-file
-         (format "next = ~a\nworkflow = ~a\nread_first = []\n"
+         (format "next = ~a\nworkflow = ~a\nread-first = []\n"
                  (toml-string "")
                  (toml-string (if workflow (scope-path->string workflow) ""))))
    (cons checks-file placeholder-checks)

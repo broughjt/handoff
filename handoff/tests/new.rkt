@@ -65,7 +65,7 @@
      (check-equal? (outcome-code result) 0 (outcome-stderr result))
      (define arc (build-path repository "offsite"))
      (check-equal? (file->string (build-path arc "start.toml"))
-                   "next = \"\"\nworkflow = \"handoff:workflow-solo.md\"\nread_first = []\n")
+                   "next = \"\"\nworkflow = \"handoff:workflow-solo.md\"\nread-first = []\n")
      (check-equal? (map check-id (parse-checks (read-toml (build-path arc "checks.toml")))) (list placeholder-check-id))
      (for ([name+text (in-list '(("arc.md" . "# offsite\n") ("tasks.md" . "# Tasks\n")
                                  ("do-not-reopen.md" . "# Do not reopen\n")
@@ -87,7 +87,7 @@
                          (outcome-stdout result))
      (check-false (git* repository "rev-parse" "--verify" "--quiet" "HEAD"))
      (write-file (build-path arc "start.toml")
-                 "next = \"Begin\"\nworkflow = \"handoff:workflow-solo.md\"\nread_first = []\n")
+                 "next = \"Begin\"\nworkflow = \"handoff:workflow-solo.md\"\nread-first = []\n")
      (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"holds\"\ncommand = \"true\"\n")
      (check-equal? (outcome-code (handoff* repository "lint" "offsite")) 0))))
 
@@ -121,10 +121,10 @@
      (write-file (build-path repository "coined.md") "coined")
      (check-equal? (outcome-code (handoff* repository "new" "one" "handoff:coined.md")) 0)
      (check-equal? (file->string (build-path repository "one" "start.toml"))
-                   "next = \"\"\nworkflow = \"handoff:coined.md\"\nread_first = []\n")
+                   "next = \"\"\nworkflow = \"handoff:coined.md\"\nread-first = []\n")
      (check-equal? (outcome-code (handoff* repository "new" "two")) 0)
      (check-equal? (file->string (build-path repository "two" "start.toml"))
-                   "next = \"\"\nworkflow = \"\"\nread_first = []\n"))))
+                   "next = \"\"\nworkflow = \"\"\nread-first = []\n"))))
 
 (test-case "new refuses, writing nothing"
   (call-with-repository

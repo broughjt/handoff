@@ -41,7 +41,7 @@
        (body repository)))
    (λ () (delete-directory/files project))))
 
-(define start-text "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\nread_first = []\n")
+(define start-text "next = \"Continue\"\nworkflow = \"handoff:shared.md\"\nread-first = []\n")
 
 ;; A repository whose `arc` passes lint. Its one check must never run during
 ;; lint.
