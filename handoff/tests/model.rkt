@@ -1,5 +1,5 @@
 #lang typed/racket/base
-;; The file formats, parsed and written without running anything.
+;; The pure functions of model.rkt: the file formats, arcs, lint and rendering.
 
 (require racket/list
          racket/path
@@ -150,6 +150,11 @@
     (check-exn exn:fail:handoff? (λ () (entry-headline text)) text)))
 
 
+(test-case "log entry names are positive integers without leading zeros"
+  (check-equal? (parse-log-entry-name "12") 12)
+  (for ([name (in-list '("0" "01" "-1" "1.0" "x" ""))])
+    (check-false (parse-log-entry-name name) name)))
+
 ;;; Comparing runs
 
 (test-case "results compare by id, definition and outcome"
@@ -204,6 +209,18 @@
 (test-case "a fork's provenance names its source reference"
   (check-equal? (workflow-provenance 'forked "arc:workflow-a.md" "abc" "2026-10-13")
                 "<!-- forked from arc:workflow-a.md (sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad) on 2026-10-13 -->\n"))
+
+(test-case "a new arc's files hold headings and a skeleton start file"
+  (define files (new-arc-files "offsite" (scope-path 'handoff (string->path "workflow-solo.md"))))
+  (check-equal? (map (inst car String String) files)
+                '("start.toml" "checks.toml" "arc.md" "tasks.md" "do-not-reopen.md" "open-questions.md" "review.md"))
+  (check-equal? (cdr (first files)) "next = \"\"\nworkflow = \"handoff:workflow-solo.md\"\nread-first = []\n")
+  (check-equal? (cdr (third files)) "# offsite\n")
+  (check-equal? (cdr (fourth files)) "# Tasks\n"))
+
+(test-case "a new arc's checks are only the placeholder"
+  (define checks (cdr (second (new-arc-files "offsite" #f))))
+  (check-equal? (map check-id (parse-checks (parse-toml checks))) (list placeholder-check-id)))
 
 (test-case "only an opening provenance line is stripped"
   (for ([how (in-list '("copied from x" "forked from y" "created for this arc on z"))])

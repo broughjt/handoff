@@ -3,8 +3,6 @@
 
 (require racket/cmdline
          racket/file
-         racket/format
-         racket/function
          racket/list
          racket/path
          racket/port
@@ -25,15 +23,18 @@
   [path<? (-> Path Path Boolean)])
 
 (provide main
-         Exit-Code
-         (struct-out diagnostic)
-         lint-arc
-         capture-limit
-         run-check
-         git
-         git*
-         git-repository?
-         project-branch-head)
+         parse-arguments
+         (struct-out invocation)
+         (struct-out list-subcommand)
+         (struct-out start-subcommand)
+         (struct-out check-subcommand)
+         (struct-out lint-subcommand)
+         (struct-out update-subcommand)
+         (struct-out new-subcommand)
+         (struct-out workflow-list-subcommand)
+         (struct-out workflow-install-subcommand)
+         (struct-out workflow-fork-subcommand)
+         (struct-out guide-subcommand))
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -485,10 +486,6 @@
   run)
 
 ;;; Reading an arc
-
-(: lint-arc (-> Path Path (Listof diagnostic)))
-(define (lint-arc directory repository)
-  (lint (read-arc directory repository)))
 
 ;; Read everything about the arc at `directory` that lint, start and update
 ;; decide from. A file that does not parse is kept as a failure.
