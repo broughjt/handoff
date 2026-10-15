@@ -16,9 +16,9 @@ The full loop, for work where the output format or interface is the hard part:
 3. **Tests first**: rendering/unit tests that pin the output format, and
    scenario/integration tests for the paths the design conversation
    identified. Written and left **red** before implementation exists.
-4. **Implement**: a fresh agent reads the handoff doc and the plan doc, then
-   makes the tests green. While the task is in flight the arc's `Read first`
-   list names the plan. The plan doc is removed with `git rm` when the task
+4. **Implement**: a fresh agent reads the handoff and the plan doc, then
+   makes the tests green. While the task is in flight a `read-first` entry in
+   `start.toml` names the plan. The plan doc is removed with `git rm` when the task
    lands, after anything durable in it has been promoted.
 
 ## Review
@@ -36,5 +36,5 @@ corresponding item above to `review.md`. If the user accepts it in session,
 nothing is added and the log entry records the acceptance. Each stage still
 waits on the user before the next begins: the next stage does not begin while
 the previous one is on the list, since the design is settled before tests pin
-it, and the tests are settled before implementation. `Next` may name other
-work meanwhile.
+it, and the tests are settled before implementation. `start.toml`'s `next`
+may name other work meanwhile.
