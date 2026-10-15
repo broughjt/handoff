@@ -454,7 +454,7 @@
   (string-append "workflow-" name ".md"))
 
 ;; The line opening a workflow copied verbatim or forked from `source`, which
-;; describes a pattern ("workflow pattern spike") or is a reference to a file,
+;; describes a pattern ("workflow spike") or is a reference to a file,
 ;; when the source's contents were `text`. The hash says whether the source has
 ;; changed since. For a verbatim copy, also include whether the copy was
 ;; amended.

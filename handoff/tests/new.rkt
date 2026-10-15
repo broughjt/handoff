@@ -73,7 +73,7 @@
        (check-equal? (file->string (build-path arc (car name+text))) (cdr name+text)))
      (define copy (file->string (build-path repository "workflow-solo.md")))
      (check-regexp-match
-      #px"^<!-- copied from workflow pattern solo \\(sha256:([0-9a-f]{64})\\) on \\d{4}-\\d{2}-\\d{2}; verbatim -->\n"
+      #px"^<!-- copied from workflow solo \\(sha256:([0-9a-f]{64})\\) on \\d{4}-\\d{2}-\\d{2}; verbatim -->\n"
       copy)
      (check-equal? (second (string-split copy "\n" #:trim? #f)) "# `solo`")
      (check-true (string-suffix? copy pattern-text))
@@ -151,7 +151,7 @@
      (check-equal? (outcome-stdout first)
                    (format "installed handoff:workflow-solo.md, copied from ~a\n" (build-path data "solo.md")))
      (define copy (file->string (build-path repository "workflow-solo.md")))
-     (check-true (string-prefix? copy "<!-- copied from workflow pattern solo (sha256:"))
+     (check-true (string-prefix? copy "<!-- copied from workflow solo (sha256:"))
      (check-true (string-suffix? copy pattern-text))
      (write-file (build-path data "solo.md") "changed")
      (define second (handoff* repository "workflow" "install" "solo"))
@@ -197,8 +197,8 @@
      (define-values (_config data) (use-pattern-directories (build-path repository 'up 'up)))
      (write-file (build-path data "solo.md") pattern-text)
      (check-equal? (fork! repository "arc" "solo-amended" "solo")
-                   "forked arc:workflow-solo-amended.md from workflow pattern solo\nto use it, set workflow in start.toml to \"arc:workflow-solo-amended.md\"\n")
-     (check-regexp-match (fork-pattern "workflow pattern solo" (sha256-hex pattern-text) pattern-text)
+                   "forked arc:workflow-solo-amended.md from workflow solo\nto use it, set workflow in start.toml to \"arc:workflow-solo-amended.md\"\n")
+     (check-regexp-match (fork-pattern "workflow solo" (sha256-hex pattern-text) pattern-text)
                          (file->string (build-path arc "workflow-solo-amended.md")))
      ;; Forking installs nothing at the root.
      (check-false (file-exists? (build-path repository "workflow-solo.md"))))))

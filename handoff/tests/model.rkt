@@ -189,7 +189,9 @@
     (check-true (string? (summary-issue text)) text)))
 
 (test-case "only a copied provenance line marks a verbatim copy"
-  (check-true (verbatim-copy? (workflow-provenance 'copied "workflow pattern solo" "abc" "2026-10-13")))
+  (check-true (verbatim-copy? (workflow-provenance 'copied "workflow solo" "abc" "2026-10-13")))
+  ;; The wording before 2026-10-15, which existing copies keep.
+  (check-true (verbatim-copy? "<!-- copied from workflow pattern solo (sha256:00) on 2026-10-13; verbatim -->\n"))
   (check-false (verbatim-copy? (workflow-provenance 'forked "arc:workflow-a.md" "abc" "2026-10-13")))
   (check-false (verbatim-copy? "# Topic\n")))
 

@@ -618,7 +618,7 @@
   (define-values (source source-path) (find-workflow repository arc-path workflow))
   (define description
     (if (pattern? source)
-        (format "workflow pattern ~a" (pattern-name source))
+        (format "workflow ~a" (pattern-name source))
         (scope-path->string source)))
   (define file (workflow-copy-name name))
   (define path (build-path arc-path file))
@@ -977,7 +977,7 @@
     [else
      (define text (file->string (pattern-path pattern)))
      (display-to-file (string-append (workflow-provenance 'copied
-                                                          (format "workflow pattern ~a" (pattern-name pattern))
+                                                          (format "workflow ~a" (pattern-name pattern))
                                                           text
                                                           (date->string (current-seconds)))
                                      text)
