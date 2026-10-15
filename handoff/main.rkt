@@ -96,8 +96,8 @@
    "  check     run the commands in checks.toml and report their results"
    "  lint      validate expected structure of a handoff arc"
    "  update    record a log entry: --begin runs the checks and records them, --commit commits"
-   "  new       create an arc's files, copying its workflow pattern"
-   "  workflow  list, install, or fork workflow patterns"
+   "  new       create an arc's files, copying its workflow"
+   "  workflow  list, install, or fork reusable workflows"
    "  guide     print the path of HANDOFF.md, which documents concepts shared by the handoff skills"
    #:once-each
    [("--repository") path
@@ -151,7 +151,7 @@
       #:program program
       #:argv arguments
       #:help-labels
-      "<workflow> is a pattern name from handoff workflow list, or a reference such as handoff:workflow-x.md"
+      "<workflow> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
       #:args (arc [workflow #f])
       (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
     [("workflow")
@@ -160,9 +160,9 @@
       #:argv arguments
       #:usage-help
       "Commands:"
-      "  list                 list the workflow patterns"
-      "  install <pattern>    copy a pattern verbatim to the handoff repository's root"
-      "  fork <arc> <name> <source>  copy a pattern or workflow file into the arc as workflow-<name>.md"
+      "  list                 list the reusable workflows"
+      "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
+      "  fork <arc> <name> <source>  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
       #:args (verb . verb-arguments)
       (parse-workflow-subcommand (assert verb string?)
                                  (map (λ (a) (assert a string?)) verb-arguments)))]
@@ -181,7 +181,7 @@
     [("fork")
      (command-line #:program program #:argv arguments
                    #:help-labels
-                   "<source> is a pattern name from handoff workflow list, or a reference such as handoff:workflow-x.md"
+                   "<source> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
                    #:args (arc name source)
                    (workflow-fork-subcommand (assert arc string?) (assert name string?) (assert source string?)))]
     [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
@@ -534,7 +534,7 @@
 (define (handle-workflow-list)
   (define patterns (find-patterns))
   (when (empty? patterns)
-    (printf "no workflow patterns in ~a\n" (string-join (map path->string (pattern-directories)) ", ")))
+    (printf "no reusable workflows in ~a\n" (string-join (map path->string (pattern-directories)) ", ")))
   (for ([pattern (in-list patterns)] [index (in-naturals)])
     (unless (zero? index) (newline))
     (printf "name: ~a\n" (pattern-name pattern))
@@ -967,7 +967,7 @@
 (: find-pattern (-> String pattern))
 (define (find-pattern name)
   (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) name)) (find-patterns))
-      (raise-handoff-error "no workflow pattern named ~a; see handoff workflow list" name)))
+      (raise-handoff-error "no reusable workflow named ~a; see handoff workflow list" name)))
 
 (: install-pattern (-> Path pattern (U Path #f)))
 (define (install-pattern repository pattern)

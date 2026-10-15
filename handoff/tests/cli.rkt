@@ -287,3 +287,18 @@ TOML
      (check-equal? (outcome-code (handoff* repository "bogus")) 2)
      (check-equal? (outcome-code (handoff* repository "list" "extra")) 2)
      (check-equal? (outcome-code (handoff* repository "--bogus" "list")) 2))))
+
+(test-case "help text calls reusable workflows workflows, not patterns"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (for ([arguments (in-list '(("--help") ("new" "--help") ("workflow" "--help")
+                                 ("workflow" "fork" "--help")))])
+       (define stdout (open-output-string))
+       (let/ec escape : Void
+         (parameterize ([current-directory repository]
+                        [current-output-port stdout]
+                        [exit-handler (λ (_code) (escape (void)))])
+           (main (list->vector arguments))
+           (void)))
+       (check-true (string-contains? (get-output-string stdout) "workflow") (format "~a" arguments))
+       (check-false (string-contains? (get-output-string stdout) "pattern") (format "~a" arguments))))))
