@@ -50,7 +50,8 @@
          describe-branch-head
          Change
          (struct-out check-change)
-         compare-results
+         compare-result
+         removed-checks
          (struct-out pattern)
          pattern-name?
          document-summary
@@ -222,7 +223,7 @@
 ;; the highest-numbered entry that is not pending.
 (struct baseline ([number : Exact-Positive-Integer] [run : (U check-run String)]) #:transparent)
 
-;; Checks are an array of tables so that they run in file order.
+;; Checks are an array of tables so that they are reported in file order.
 (: parse-checks (-> Table (Listof check)))
 (define (parse-checks table)
   (expect-fields table null (list 'check) "checks")
@@ -370,31 +371,27 @@
                       [change : Change])
   #:transparent)
 
-;; Obtain a list of `check-changes` for overlapping or new ids and a list of
-;; removed ids.
-(: compare-results (-> (Listof check-result) (Listof check-result)
-                       (Values (Listof check-change) (Listof check))))
-(define (compare-results current previous)
-  (define (id [result : check-result]) (check-id (check-result-check result)))
-  (define by-id
-    (for/hash : (Immutable-HashTable String check-result) ([result (in-list previous)])
-      (values (id result) result)))
-  (define changes
-    (for/list : (Listof check-change) ([after (in-list current)])
-      (define before (hash-ref by-id (id after) #f))
-      (define change
-        (cond
-          [(not before) 'new]
-          [(not (equal? (check-result-check before) (check-result-check after))) 'redefined]
-          [(eq? (check-result-outcome before) (check-result-outcome after)) 'unchanged]
-          [else 'flipped]))
-      (check-change after before change)))
-  (define ids (map id current))
-  (values changes
-          (filter-map
-           (lambda ([result : check-result])
-             (and (not (member (id result) ids)) (check-result-check result)))
-           previous)))
+;; How `after` changed since the result with its id in `previous`.
+(: compare-result (-> check-result (Listof check-result) check-change))
+(define (compare-result after previous)
+  (define id (check-id (check-result-check after)))
+  (define before
+    (findf (λ ([result : check-result]) (equal? (check-id (check-result-check result)) id)) previous))
+  (define change
+    (cond
+      [(not before) 'new]
+      [(not (equal? (check-result-check before) (check-result-check after))) 'redefined]
+      [(eq? (check-result-outcome before) (check-result-outcome after)) 'unchanged]
+      [else 'flipped]))
+  (check-change after before change))
+
+;; The checks of `previous` whose ids none of `current` has.
+(: removed-checks (-> (Listof check) (Listof check-result) (Listof check)))
+(define (removed-checks current previous)
+  (define ids (map check-id current))
+  (for/list ([result (in-list previous)]
+             #:unless (member (check-id (check-result-check result)) ids))
+    (check-result-check result)))
 
 ;;; Workflow patterns and new arcs
 
@@ -477,7 +474,8 @@
 (define placeholder-checks
   (string-append
    "# Each check is a claim about the project and a command that acts as a\n"
-   "# mechanical decision procedure for the claim. Checks run in file order.\n"
+   "# mechanical decision procedure for the claim. Checks run in parallel and\n"
+   "# are reported in file order.\n"
    "# The `timeout` field is measured in seconds; it is optional and defaults to\n"
    "# " (number->string default-timeout) ".\n"
    "[[check]]\n"

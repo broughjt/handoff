@@ -61,7 +61,7 @@ TOML
          (define result (handoff* repository "check"))
          (define stdout (outcome-stdout result))
          (check-equal? (outcome-code result) 1 (outcome-stderr result))
-         (check-regexp-match #px"^id: yes\nclaim: holds\noutcome: true\nduration: \\d+\\.\\ds\n\nid: no\n" stdout)
+         (check-regexp-match #px"^running 4 checks\n\nid: yes\nclaim: holds\noutcome: true\nduration: \\d+\\.\\ds\n\nid: no\n" stdout)
          (check-regexp-match
           #px"^host: .+, duration: \\d+\\.\\ds, summary: 1 true, 1 false, 1 unknown, 1 timeout$"
           (last (lines stdout)))
@@ -72,6 +72,27 @@ TOML
            (check-false (string-contains? stdout absent) absent))
          (check-equal? (outcome-stderr result) "")
          (check-equal? (snapshot repository) before))))))
+
+(test-case "checks run in parallel and are reported in file order"
+  (call-with-repository
+   (λ ([repository : Path])
+     (define arc (build-path repository "arc"))
+     (write-file (build-path arc "start.toml") "")
+     (write-file (build-path arc "checks.toml")
+                 (string-append*
+                  (for/list : (Listof String) ([id (in-list '("first" "second" "third" "fourth"))]
+                                               [command (in-list '("sleep 2; echo late" "true" "sleep 2" "sleep 2"))])
+                    (format "[[check]]\nid = ~s\nclaim = \"c\"\ncommand = ~s\n\n" id command))))
+     (define started (current-inexact-milliseconds))
+     (define result (handoff* repository "check"))
+     (define elapsed (/ (- (current-inexact-milliseconds) started) 1000))
+     (check-equal? (outcome-code result) 0 (outcome-stderr result))
+     (check-equal? (filter (λ ([line : String]) (string-prefix? line "id: ")) (lines (outcome-stdout result)))
+                   '("id: first" "id: second" "id: third" "id: fourth"))
+     ;; Run one after another, they would take 6 seconds.
+     (check-true (< elapsed 4) (format "took ~a s" elapsed))
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"one\"\nclaim = \"c\"\ncommand = \"true\"\n")
+     (check-true (string-prefix? (outcome-stdout (handoff* repository "check")) "running 1 check\n\nid: one\n")))))
 
 (test-case "check succeeds with true or no checks"
   (call-with-arc

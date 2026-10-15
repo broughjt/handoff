@@ -244,8 +244,7 @@
                      (λ ([error : exn])
                        (raise-handoff-error "~a: ~a" checks-path (exn-message error)))])
       (parse-checks (read-toml checks-path))))
-  (define run (run-checks checks (find-project-repository repository)))
-  (report run)
+  (define run (run-and-report checks (find-project-repository repository)))
   (if (andmap (λ ([result : check-result]) (eq? (check-result-outcome result) 'true))
               (check-run-results run))
       'success 'failure))
@@ -404,9 +403,7 @@
       (parse-checks (read-toml (build-path arc-path checks-file)))))
   (cond
     [(string? checks) (printf "not run: ~a: ~a\n" checks-file checks)]
-    [else
-     (newline)
-     (report (run-checks checks project) #:baseline baseline)])
+    [else (void (run-and-report checks project #:baseline baseline))])
   'success)
 
 ;; The most commits listed when reporting what changed in the project.
@@ -460,7 +457,7 @@
   (define arc-path (build-path repository arc))
   (refuse-lint-errors repository arc)
   (define checks (parse-checks (read-toml (build-path arc-path checks-file))))
-  (define run (run-checks checks (find-project-repository repository)))
+  (define run (run-and-report checks (find-project-repository repository)))
 
   (define-values (numbers _invalid) (list-log-entries arc-path))
   (define number (or (pending-log-entry arc-path) (add1 (apply max 0 numbers))))
@@ -474,7 +471,6 @@
   (display-to-file (check-run->toml run) temporary #:exists 'truncate/replace)
   (rename-file-or-directory temporary results-path #t)
 
-  (report run)
   (printf "\nlog/~a results recorded. Write the entry to ~a, then run handoff update --commit ~a\n"
           number (build-path entry-path entry-file) arc)
   'success)
@@ -642,56 +638,25 @@
                          arc (length diagnostics)
                          (string-join (map diagnostic->string diagnostics) "\n"))))
 
-;; Print each check's result as a record of labeled fields, noting its change
-;; since `baseline` when that has results, then a summary of the run.
-(: report (->* (check-run) (#:baseline (U baseline #f)) Void))
-(define (report run #:baseline [baseline #f])
-  (define results (check-run-results run))
-  (define previous (and baseline (baseline-results baseline)))
-  (define-values (changes removed)
-    (if previous
-        (compare-results results (check-run-results previous))
-        (values null null)))
+;; Run the checks, printing each check's result as a record of labeled fields
+;; as soon as it and every check before it in file order have finished, so
+;; that the output does not depend on timing. Note each result's change since
+;; `baseline` when that has results, then summarize the run.
+(: run-and-report (->* ((Listof check) Path) (#:baseline (U baseline #f)) check-run))
+(define (run-and-report checks project #:baseline [baseline #f])
+  (define previous (let ([run (and baseline (baseline-results baseline))])
+                     (if run (check-run-results run) null)))
   (define number (and baseline (baseline-number baseline)))
-  (define (seconds [duration : Real]) (string-append (~r duration #:precision '(= 1)) "s"))
-  (define (field [name : String] [template : String] . [arguments : Any *])
-    (printf "~a: ~a\n" name (apply format template arguments)))
-  (define (print-output [label : String] [result : check-result])
-    (define lines (string-split (check-result-output result) "\n"))
-    (unless (empty? lines)
-      (define tail (drop lines (max 0 (- (length lines) output-lines))))
-      (printf "~a~a:\n" label (if (< (length tail) (length lines))
-                                  (format " (last ~a of ~a lines)" (length tail) (length lines))
-                                  ""))
-      (for ([line (in-list tail)])
-        (printf "  ~a\n" line))))
-  (for ([result (in-list results)] [index (in-naturals)])
-    (define check (check-result-check result))
-    (define outcome (check-result-outcome result))
-    (define change (findf (λ ([change : check-change]) (eq? (check-change-after change) result)) changes))
-    (define before (and change (check-change-before change)))
-    (define flipped? (and change (eq? (check-change-change change) 'flipped)))
-    (unless (zero? index) (newline))
-    (field "id" "~a" (check-id check))
-    (field "claim" "~a" (check-claim check))
-    (field "outcome" "~a" outcome)
-    (case (and change (check-change-change change))
-      [(flipped) (field "change" "was ~a at log/~a" (check-result-outcome (assert before)) number)]
-      [(redefined) (field "change" "definition changed since log/~a, where it was ~a"
-                          number (check-result-outcome (assert before)))]
-      [(new) (field "change" "new since log/~a" number)]
-      [else (void)])
-    (case outcome
-      [(true) (void)]
-      [(timeout) (field "timeout" "~a" (seconds (check-timeout check)))]
-      [else (field "exit" "~a" (check-result-exit result))])
-    (field "duration" "~a" (seconds (check-result-duration result)))
-    (when (or flipped? (not (eq? outcome 'true)))
-      (unless (zero? (check-result-truncated result))
-        (field "truncated" "~a bytes before the output were not kept" (check-result-truncated result)))
-      (print-output "output" result))
-    (when (and flipped? before)
-      (print-output (format "output at log/~a" number) before)))
+  (printf "running ~a ~a\n" (length checks) (if (= (length checks) 1) "check" "checks"))
+  (flush-output)
+  (define run
+    (run-checks checks project
+                #:on-result (λ ([result : check-result])
+                              (newline)
+                              (report-result result (and number (compare-result result previous)) number)
+                              (flush-output))))
+  (define results (check-run-results run))
+  (define removed (if number (removed-checks checks previous) null))
   (unless (empty? removed)
     (newline)
     (for ([check (in-list removed)])
@@ -703,12 +668,55 @@
                                                           results))]
                                   #:unless (zero? count))
       (format "~a ~a" count outcome)))
-  (unless (and (empty? results) (empty? removed))
-    (newline))
+  (newline)
   (printf "host: ~a, duration: ~a, summary: ~a\n"
           (check-run-host run)
-          (seconds (check-run-duration run))
-          (if (empty? counts) "no checks" (string-join counts ", "))))
+          (seconds->string (check-run-duration run))
+          (if (empty? counts) "no checks" (string-join counts ", ")))
+  run)
+
+;; Print one check's result, and its change since log/`number` when compared.
+(: report-result (-> check-result (U check-change #f) (U Exact-Positive-Integer #f) Void))
+(define (report-result result change number)
+  (define (field [name : String] [template : String] . [arguments : Any *])
+    (printf "~a: ~a\n" name (apply format template arguments)))
+  (define (print-output [label : String] [result : check-result])
+    (define lines (string-split (check-result-output result) "\n"))
+    (unless (empty? lines)
+      (define tail (drop lines (max 0 (- (length lines) output-lines))))
+      (printf "~a~a:\n" label (if (< (length tail) (length lines))
+                                  (format " (last ~a of ~a lines)" (length tail) (length lines))
+                                  ""))
+      (for ([line (in-list tail)])
+        (printf "  ~a\n" line))))
+  (define check (check-result-check result))
+  (define outcome (check-result-outcome result))
+  (define before (and change (check-change-before change)))
+  (define flipped? (and change (eq? (check-change-change change) 'flipped)))
+  (field "id" "~a" (check-id check))
+  (field "claim" "~a" (check-claim check))
+  (field "outcome" "~a" outcome)
+  (case (and change (check-change-change change))
+    [(flipped) (field "change" "was ~a at log/~a" (check-result-outcome (assert before)) number)]
+    [(redefined) (field "change" "definition changed since log/~a, where it was ~a"
+                        number (check-result-outcome (assert before)))]
+    [(new) (field "change" "new since log/~a" number)]
+    [else (void)])
+  (case outcome
+    [(true) (void)]
+    [(timeout) (field "timeout" "~a" (seconds->string (check-timeout check)))]
+    [else (field "exit" "~a" (check-result-exit result))])
+  (field "duration" "~a" (seconds->string (check-result-duration result)))
+  (when (or flipped? (not (eq? outcome 'true)))
+    (unless (zero? (check-result-truncated result))
+      (field "truncated" "~a bytes before the output were not kept" (check-result-truncated result)))
+    (print-output "output" result))
+  (when (and flipped? before)
+    (print-output (format "output at log/~a" number) before)))
+
+(: seconds->string (-> Real String))
+(define (seconds->string duration)
+  (string-append (~r duration #:precision '(= 1)) "s"))
 
 ;;; Lint
 
@@ -805,14 +813,32 @@
 ;; is dropped: a failure is usually explained at the end.
 (define capture-limit : Exact-Positive-Integer (* 1024 1024))
 
-(: run-checks (-> (Listof check) Path check-run))
-(define (run-checks checks project)
+(: run-checks (->* ((Listof check) Path) (#:on-result (-> check-result Void)) check-run))
+(define (run-checks checks project #:on-result [on-result void])
   (define wall-clock (current-seconds))
   (define started (current-inexact-monotonic-milliseconds))
-  ;; Checks run in the project root, so that a relative path in a check means
-  ;; the same thing wherever handoff was run from.
-  (define results (parameterize ([current-directory project])
-                    (map run-check checks)))
+  ;; Every check starts at once, each in its own thread. Checks run in the
+  ;; project root, so that a relative path in a check means the same thing
+  ;; wherever handoff was run from.
+  (define waits
+    (parameterize ([current-directory project])
+      (for/list : (Listof (-> check-result)) ([check (in-list checks)])
+        (define outcome : (Boxof (U check-result exn:fail #f)) (box #f))
+        (define worker
+          (thread (λ ()
+                    (set-box! outcome (with-handlers ([exn:fail? (λ ([error : exn:fail]) error)])
+                                        (run-check check))))))
+        (λ ()
+          (thread-wait worker)
+          (define result (unbox outcome))
+          (if (check-result? result) result (raise result))))))
+  ;; Results are passed on in file order, each once it and those before it
+  ;; have finished.
+  (define results
+    (for/list : (Listof check-result) ([wait (in-list waits)])
+      (define result (wait))
+      (on-result result)
+      result))
   (check-run (gethostname) wall-clock (seconds-since started) (project-branch-head project) results))
 
 (: run-check (-> check check-result))

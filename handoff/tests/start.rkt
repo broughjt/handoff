@@ -83,7 +83,7 @@
                   (format "==> project repository status <==\nrepository: ~a\nnow: "
                           (string-trim (path->string project) "/" #:left? #f))
                   "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\npending log entry: none\nuncommitted: none\n\n"
-                  "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
+                  "==> checks <==\nno earlier log entry to compare against\nrunning 2 checks\n\nid: marker\n"
                   "outcome: false\nexit: 1\n"
                   "output:\n  no marker\n"
                   "summary: 1 true, 1 false\n")
