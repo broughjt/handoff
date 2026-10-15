@@ -226,7 +226,7 @@ Each copy opens with a provenance line saying where it came from:
 
 | Line | Written by | Lives |
 |---|---|---|
-| `<!-- copied from workflow pattern <name> (sha256:…) on <date>; verbatim -->` | `handoff new`, `handoff workflow install` | at the root, shareable between arcs |
+| `<!-- copied from workflow <name> (sha256:…) on <date>; verbatim -->` | `handoff new`, `handoff workflow install` | at the root, shareable between arcs |
 | `<!-- forked from <source> (sha256:…) on <date> -->` | `handoff workflow fork` | in the arc |
 | `<!-- created for this arc on <date> -->` | you | in the arc |
 
