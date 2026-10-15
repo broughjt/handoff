@@ -28,7 +28,7 @@ Run `handoff start [arc]` synchronously. It runs the checks, so give it the time
 
 The report inlines `start.toml`, `arc.md`, the workflow, `tasks.md`, `do-not-reopen.md`, `open-questions.md`, `review.md`, and the latest log entry. Do not read them again unless you mean to modify them.
 
-Read every `read_first` entry the report lists, except those it marks missing, which are discrepancies (step 4). The report lists the arc's other files and the topic documents with their summaries. By default, read these only when their summaries bear directly on `next`. Do not read older log entries unless something in the report is unclear and reading the history would resolve it.
+Read every `read-first` entry the report lists, except those it marks missing, which are discrepancies (step 4). The report lists the arc's other files and the topic documents with their summaries. By default, read these only when their summaries bear directly on `next`. Do not read older log entries unless something in the report is unclear and reading the history would resolve it.
 
 ## Step 4: Interpret the report
 
@@ -45,12 +45,12 @@ Use the latest log entry and the rest of the arc's files to interpret the result
 
 Examine changes in the project repository since the last handoff:
 
-- Commits since the recorded head: work done outside a session, often by the user. Commits the user wrote come before `next`: read them alongside the `read_first` entries, and raise anything in them that changes or contradicts the arc's files. Other commits you cannot account for may be discrepancies worth reporting.
+- Commits since the recorded head: work done outside a session, often by the user. Commits the user wrote come before `next`: read them alongside the `read-first` entries, and raise anything in them that changes or contradicts the arc's files. Other commits you cannot account for may be discrepancies worth reporting.
 - Rewritten history: map the commit subjects mentioned in the latest log entry and in `review.md` onto the new commits.
 - A recorded head that no longer resolves: history was rewritten and pruned, or the last handoff was made on another machine.
 - A branch that differs from the one recorded.
 
-Check for discrepancies in the handoff repository, including lint errors, uncommitted changes, and `read_first` entries or a workflow marked missing.
+Check for discrepancies in the handoff repository, including lint errors, uncommitted changes, and `read-first` entries or a workflow marked missing.
 
 A pending log entry means an update was begun and never committed, so the last handoff is the one before it. Report the entry's host and time and whether it has an `entry.md`, and ask the user whether to finish it (rerun `handoff update --begin`, review the entry, then `handoff update --commit`) or discard it. Do not do either without the user's explicit confirmation.
 
