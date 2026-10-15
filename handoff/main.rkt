@@ -939,6 +939,10 @@
       (define key (assert (second name)))
       (define earlier (hash-ref found key #f))
       (cond
+        ;; Two data directories can hold the same file, as when one is a
+        ;; profile linking to the package that another names directly.
+        [(and earlier (equal? (normalize-path path) (normalize-path (pattern-path earlier))))
+         (void)]
         [earlier
          (hash-set! found key (struct-copy pattern earlier
                                            [shadowed (append (pattern-shadowed earlier) (list path))]))]

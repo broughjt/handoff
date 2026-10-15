@@ -46,6 +46,30 @@
                    (format "name: pair\npath: ~a\nsummary: Two agents.\n\nname: solo\npath: ~a\nshadows: ~a\nsummary: My own.\n"
                            (build-path data "pair.md") (build-path config "solo.md") (build-path data "solo.md"))))))
 
+(test-case "workflow list does not report a file as shadowing itself through a link"
+  (call-with-repository
+   (λ ([repository : Path])
+     (define-values (_config data) (use-pattern-directories (build-path repository 'up 'up)))
+     (write-file (build-path data "solo.md") pattern-text)
+     (write-file (build-path data "pair.md") "# Pair\n\nTwo agents.\n")
+     ;; One data directory links to another as a whole, and a third links
+     ;; to a single file.
+     (define base (build-path repository 'up 'up))
+     (make-file-or-directory-link (build-path base "data") (build-path base "linked"))
+     (make-directory* (build-path base "single" "handoff" "workflows"))
+     (make-file-or-directory-link (build-path data "pair.md")
+                                  (build-path base "single" "handoff" "workflows" "pair.md"))
+     (environment-variables-set! (current-environment-variables) #"XDG_DATA_DIRS"
+                                 (string->bytes/utf-8
+                                  (string-join (map (λ ([name : String]) (path->string (build-path base name)))
+                                                    '("data" "linked" "single"))
+                                               ":")))
+     (define result (handoff* repository "workflow" "list"))
+     (check-equal? (outcome-code result) 0 (outcome-stderr result))
+     (check-equal? (outcome-stdout result)
+                   (format "name: pair\npath: ~a\nsummary: Two agents.\n\nname: solo\npath: ~a\nsummary: The agent works alone.\n"
+                           (build-path data "pair.md") (build-path data "solo.md"))))))
+
 (test-case "workflow list with no patterns says where it looked"
   (call-with-repository
    (λ ([repository : Path])
