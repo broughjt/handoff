@@ -1,5 +1,9 @@
 # `design-first-tdd`
 
+Settle a design with the user, pin it in failing tests, and have a fresh
+agent implement it from a plan, with the user reviewing each stage before the
+next begins.
+
 The full loop, for work where the output format or interface is the hard part:
 
 1. **Design conversation**: work out the design with the user. Present decisions
