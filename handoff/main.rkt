@@ -331,7 +331,7 @@
     (printf "- ~a~a\n" (document-label document) (if (string=? summary "") "" (string-append ": " summary))))
 
   (section "project repository status")
-  (report-project project baseline)
+  (write-string (render-project (read-project-status project baseline)))
 
   (section "handoff repository status")
   (printf "repository: ~a\n" (show-path repository))
@@ -381,44 +381,34 @@
     [else (void (run-and-report checks project #:baseline baseline))])
   'success)
 
-;; The most commits listed when reporting what changed in the project.
-(define commit-limit 20)
-
-;; Compare the project's branch and head with those recorded in the baseline.
-(: report-project (-> Path (U log-entry #f) Void))
-(define (report-project project baseline)
-  (define current (project-branch-head project))
-  (define earlier (and baseline (let ([run (log-entry-results baseline)]) (and (check-run? run) run))))
-  (printf "repository: ~a\n" project)
-  (printf "now: ~a\n" (describe-branch-head current))
-  (when (and baseline earlier)
-    (define number (log-entry-number baseline))
-    (define recorded (check-run-project-head earlier))
-    (printf "at log/~a: ~a\n" number (describe-branch-head recorded))
-    (unless (equal? (branch-head-branch recorded) (branch-head-branch current))
-      (printf "the branch differs\n"))
-    (define old (branch-head-head recorded))
-    (define new (branch-head-head current))
-    (define (commits [heading : String] [log-format : String] . [arguments : String *])
-      (define lines
-        (string-split (apply git project "log" "--abbrev=12" (string-append "--format=" log-format) arguments)
-                      "\n"))
-      (printf "~a\n" heading)
-      (for ([line (in-list (take lines (min commit-limit (length lines))))])
-        (printf "  ~a\n" line))
-      (when (> (length lines) commit-limit)
-        (printf "  and ~a more\n" (- (length lines) commit-limit))))
-    (cond
-      [(equal? old new) (printf "no new commits\n")]
-      [(not new) (printf "project has no commits now\n")]
-      [(not old) (commits "commits, all new since:" "%h %s" new)]
-      [(not (git* project "cat-file" "-e" (string-append old "^{commit}")))
-       (printf "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")]
-      [(git* project "merge-base" "--is-ancestor" old new)
-       (commits "commits since:" "%h %s" (format "~a..~a" old new))]
-      [else
-       (commits "recorded head is no longer an ancestor of HEAD, so history was rewritten; < marks commits only in the recorded history, > only in the current one:"
-                "%m %h %s" "--left-right" (format "~a...~a" old new))])))
+;; The project's branch and head, and what happened since those recorded in
+;; the baseline's results.
+(: read-project-status (-> Path (U log-entry #f) project-status))
+(define (read-project-status project baseline)
+  (define now (project-branch-head project))
+  (define earlier (and baseline (log-entry-results baseline)))
+  (project-status
+   project
+   now
+   (and baseline
+        (check-run? earlier)
+        (let* ([recorded (check-run-project-head earlier)]
+               [old (branch-head-head recorded)]
+               [new (branch-head-head now)])
+          (define (commits [log-format : String] . [arguments : String *])
+            (string-split (apply git project "log" "--abbrev=12" (string-append "--format=" log-format) arguments)
+                          "\n"))
+          (project-change
+           (log-entry-number baseline)
+           recorded
+           (cond
+             [(equal? old new) 'unchanged]
+             [(not new) 'no-head]
+             [(not old) (cons 'all (commits "%h %s" new))]
+             [(not (git* project "cat-file" "-e" (string-append old "^{commit}"))) 'unresolvable]
+             [(git* project "merge-base" "--is-ancestor" old new)
+              (cons 'since (commits "%h %s" (format "~a..~a" old new)))]
+             [else (cons 'rewritten (commits "%m %h %s" "--left-right" (format "~a...~a" old new)))]))))))
 
 ;; Recording a log entry happens in two command-line steps: `update --begin`
 ;; records check results in a results.toml file for the pending log entry, the

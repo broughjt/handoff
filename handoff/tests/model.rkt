@@ -402,3 +402,37 @@
 (test-case "checks removed since the baseline are listed before the summary"
   (check-equal? (render-run-end (run-with '("x")) (entry 2 #:results (run-with '("x" "gone"))))
                 "\nremoved since log/2: gone (holds)\n\nhost: murph, duration: 1.0s, summary: 1 true\n"))
+
+(define (status [history : History] #:recorded [recorded : branch-head (branch-head "main" "aaa")])
+  (project-status (string->path "/project") (branch-head "main" "bbb") (project-change 3 recorded history)))
+
+(test-case "without a baseline with results, only the project's head is shown"
+  (check-equal? (render-project (project-status (string->path "/project") (branch-head #f #f) #f))
+                "repository: /project\nnow: a detached HEAD at no commit\n"))
+
+(test-case "an unchanged head says there are no new commits"
+  (check-equal? (render-project (status 'unchanged))
+                "repository: /project\nnow: main at bbb\nat log/3: main at aaa\nno new commits\n"))
+
+(test-case "a branch other than the recorded one is noted"
+  (check-true (string-contains? (render-project (status 'unchanged #:recorded (branch-head "work" "aaa")))
+                                "at log/3: work at aaa\nthe branch differs\n")))
+
+(test-case "a project without commits says so"
+  (check-true (string-suffix? (render-project (status 'no-head)) "\nproject has no commits now\n")))
+
+(test-case "a recorded head that does not resolve says why it might not"
+  (check-true (string-suffix? (render-project (status 'unresolvable))
+                              "\nrecorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")))
+
+(test-case "each kind of history has its own heading"
+  (check-true (string-suffix? (render-project (status '(since "b2 Two" "b1 One"))) "\ncommits since:\n  b2 Two\n  b1 One\n"))
+  (check-true (string-suffix? (render-project (status '(all "b1 One"))) "\ncommits, all new since:\n  b1 One\n"))
+  (check-true (string-contains? (render-project (status '(rewritten "> b1 New" "< a1 Old")))
+                                "history was rewritten; < marks commits only in the recorded history, > only in the current one:\n  > b1 New\n  < a1 Old\n")))
+
+(test-case "only the first 20 commits are listed"
+  (define lines (for/list : (Listof String) ([n (in-range 25)]) (format "c~a" n)))
+  (define text (render-project (status (cons 'since lines))))
+  (check-true (string-contains? text "  c19\n  and 5 more\n"))
+  (check-false (string-contains? text "c20")))

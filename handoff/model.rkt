@@ -80,7 +80,11 @@
          render-run-start
          render-compared-result
          render-result
-         render-run-end)
+         render-run-end
+         (struct-out project-status)
+         (struct-out project-change)
+         History
+         render-project)
 
 ;;; Layout
 
@@ -756,6 +760,59 @@
            (check-run-host run)
            (seconds->string (check-run-duration run))
            (if (empty? counts) "no checks" (string-join counts ", ")))
+  (get-output-string out))
+
+;; The project's branch and head now, and what happened since the baseline,
+;; when it has results.
+(struct project-status ([path : Path] [now : branch-head] [since : (U project-change #f)])
+  #:transparent)
+
+;; The head recorded in log/`number`'s results, and the commits between it and
+;; the project's head now: Git's log lines, untruncated.
+(struct project-change ([number : Exact-Positive-Integer] [recorded : branch-head] [history : History])
+  #:transparent)
+
+(define-type History
+  (U 'unchanged                ; the head is the recorded one
+     'no-head                  ; the project has no commits now
+     'unresolvable             ; the recorded head is not in the repository
+     (Pairof (U 'all           ; nothing was recorded, so every commit is new
+                'since         ; the recorded head is an ancestor of the head
+                'rewritten)    ; it is not, so lines are marked < or > by side
+             (Listof String))))
+
+;; The most commits listed when reporting what changed in the project.
+(define commit-limit 20)
+
+(: render-project (-> project-status String))
+(define (render-project status)
+  (define out (open-output-string))
+  (define now (project-status-now status))
+  (define since (project-status-since status))
+  (fprintf out "repository: ~a\n" (project-status-path status))
+  (fprintf out "now: ~a\n" (describe-branch-head now))
+  (when since
+    (define recorded (project-change-recorded since))
+    (fprintf out "at log/~a: ~a\n" (project-change-number since) (describe-branch-head recorded))
+    (unless (equal? (branch-head-branch recorded) (branch-head-branch now))
+      (fprintf out "the branch differs\n"))
+    (define (commits [heading : String] [lines : (Listof String)])
+      (fprintf out "~a\n" heading)
+      (for ([line (in-list (take lines (min commit-limit (length lines))))])
+        (fprintf out "  ~a\n" line))
+      (when (> (length lines) commit-limit)
+        (fprintf out "  and ~a more\n" (- (length lines) commit-limit))))
+    (define history (project-change-history since))
+    (match history
+      ['unchanged (fprintf out "no new commits\n")]
+      ['no-head (fprintf out "project has no commits now\n")]
+      ['unresolvable
+       (fprintf out "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")]
+      [(cons 'all lines) (commits "commits, all new since:" lines)]
+      [(cons 'since lines) (commits "commits since:" lines)]
+      [(cons 'rewritten lines)
+       (commits "recorded head is no longer an ancestor of HEAD, so history was rewritten; < marks commits only in the recorded history, > only in the current one:"
+                lines)]))
   (get-output-string out))
 
 ;; The results of the baseline's run, or #f without a baseline with results.
