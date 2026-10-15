@@ -57,7 +57,7 @@ Update the following in place:
 You are in the best position to know what the next session will need to pick the work back up. Rewrite every field of `start.toml` for the next session with this in mind:
 
 - `next`: one concrete action, beginnable cold.
-- `read_first`: files the next agent should read, each with a reason. Drop task documents when their task has closed. This is the field that saves the next session the most time and the one most often left stale.
+- `read-first`: files the next agent should read, each with a reason. Drop task documents when their task has closed. This is the field that saves the next session the most time and the one most often left stale.
 - `workflow`: the copy governing `next`. To switch, run `handoff workflow install` or `handoff workflow fork`, then set the field to the reference it prints. In an unattended session, leave the workflow as it is.
 
 ## Step 7: Confirm decisions
@@ -91,7 +91,7 @@ Brief the user about what changed in the arc, what you promoted or removed, and 
 
 Only when the user says the arc is closed.
 
-1. Check that everything that outlives the arc is already in root topic documents, and move anything that is not. Check that no other arc's `read_first` points into this one.
+1. Check that everything that outlives the arc is already in root topic documents, and move anything that is not. Check that no other arc's `read-first` points into this one.
 2. Run steps 2 through 9. Your log entry should say how the arc ended.
 3. Tag the commit: `git -C .scratch/handoff tag archive/<arc>`. The tag keeps the arc's final state addressable.
 4. Run `git -C .scratch/handoff rm -r <arc>`, then `git -C .scratch/handoff commit -m "<arc>: close"`.
