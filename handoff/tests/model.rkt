@@ -176,10 +176,21 @@
   (for ([name (in-list '("README" "-x" "" "a.b" "a b"))])
     (check-false (pattern-name? name) name)))
 
-(test-case "a pattern's summary is its first paragraph after the headings"
-  (check-equal? (pattern-summary "# `spike`\n\nAn investigation\n  with a budget.\n\nMore.\n") "An investigation with a budget.")
-  (check-equal? (pattern-summary "\nNo heading.\n## Review\nNone.\n") "No heading.")
-  (check-equal? (pattern-summary "# Only a heading\n") ""))
+(test-case "a document's summary is its first paragraph after its provenance line and headings"
+  (check-equal? (document-summary "# `spike`\n\nAn investigation\n  with a budget.\n\nMore.\n") "An investigation with a budget.")
+  (check-equal? (document-summary "\nNo heading.\n## Review\nNone.\n") "No heading.")
+  (check-equal? (document-summary "# Only a heading\n") "")
+  (check-equal? (document-summary "<!-- created for this arc on 2026-10-15 -->\n# W\n\nHow.\n") "How."))
+
+(test-case "a summary must be a paragraph of prose"
+  (check-false (summary-issue "# T\n\nProse.\n"))
+  (for ([text (in-list '("# T\n" "" "# T\n\n- item\n" "1. item\n" "```\ncode\n```\n" "| a | b |\n" "<!-- note -->\n"))])
+    (check-true (string? (summary-issue text)) text)))
+
+(test-case "only a copied provenance line marks a verbatim copy"
+  (check-true (verbatim-copy? (workflow-provenance 'copied "workflow pattern solo" "abc" "2026-10-13")))
+  (check-false (verbatim-copy? (workflow-provenance 'forked "arc:workflow-a.md" "abc" "2026-10-13")))
+  (check-false (verbatim-copy? "# Topic\n")))
 
 (test-case "a verbatim copy's provenance records the SHA-256 of the pattern in lowercase hexadecimal"
   (check-equal? (workflow-provenance 'copied "workflow pattern solo" "abc" "2026-10-13")

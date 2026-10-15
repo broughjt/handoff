@@ -170,6 +170,18 @@ TOML
      (for ([text (in-list '("start.toml" "arc.md" "checks.toml" "entry.md" "results.toml" "5 lint errors"))])
        (check-true (string-contains? (outcome-stdout result) text) text)))))
 
+(test-case "lint flags documents without a prose summary, except verbatim copies"
+  (call-with-arc
+   (λ ([repository : Path] [arc : Path])
+     (write-file (build-path arc "notes.md") "# Notes\n\n- a list\n")
+     (write-file (build-path arc "workflow-mine.md") "<!-- created for this arc on 2026-10-15 -->\n# Mine\n\nHow we work.\n")
+     (write-file (build-path arc "data.txt") "")
+     (write-file (build-path repository "topic.md") "# Only a heading\n")
+     (write-file (build-path repository "workflow-solo.md")
+                 "<!-- copied from workflow pattern solo (sha256:00) on 2026-10-15; verbatim -->\n- not checked\n")
+     (check-equal? (map diagnostic-path (lint-arc arc repository))
+                   (list (build-path arc "notes.md") (build-path repository "topic.md"))))))
+
 (test-case "an incomplete committed latest log entry is reported"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])

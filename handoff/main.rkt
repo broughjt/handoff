@@ -20,7 +20,9 @@
   ;; Typed Racket's type for subprocess has no 'stdout for stderr.
   [(subprocess subprocess/merged)
    (-> False False 'stdout Path-String String *
-       (Values Subprocess Input-Port Output-Port False))])
+       (Values Subprocess Input-Port Output-Port False))]
+  ;; Typed Racket has no type for this either.
+  [path<? (-> Path Path Boolean)])
 
 (provide main
          Exit-Code
@@ -256,12 +258,35 @@
   (printf "~a: ~a lint errors\n" arc (length diagnostics))
   (if (empty? diagnostics) 'success 'failure))
 
+;; The documents an agent may open beyond the ones start inlines, as
+;; references with paths: the arc's files and directories beside its layout,
+;; then the Markdown files at the handoff repository's root other than verbatim
+;; workflow copies, which are the shared topic documents.
+(: arc-documents (-> Path Path (Listof (Pairof String Path))))
+(define (arc-documents arc repository)
+  (define layout (map string->path (list* start-file checks-file log-directory state-files)))
+  (define (names [directory : Path]) (sort (directory-list directory) path<?))
+  (append
+   (for/list : (Listof (Pairof String Path)) ([name (in-list (names arc))]
+                                              #:unless (member name layout))
+     (define path (build-path arc name))
+     (cons (format "arc:~a" (if (directory-exists? path) (path->directory-path name) name)) path))
+   (for/list : (Listof (Pairof String Path)) ([name (in-list (names repository))]
+                                              #:when (markdown-file? (build-path repository name))
+                                              #:unless (verbatim-copy? (file->string (build-path repository name))))
+     (cons (format "handoff:~a" name) (build-path repository name)))))
+
+(: markdown-file? (-> Path Boolean))
+(define (markdown-file? path)
+  (and (file-exists? path) (path-has-extension? path #".md")))
+
 ;; Brief an agent to start work on a handoff arc. First the arc's state: its
-;; start metadata, the files it names and the latest log entry, inlined. Then
-;; what has happened since that entry: the project's commits, the handoff
-;; repository's lint diagnostics, pending entry and uncommitted changes, and the
-;; checks compared against the entry's results. Renders whatever parses and
-;; writes nothing. Paths are shown relative to the project.
+;; start metadata, the files it names and the latest log entry, inlined, and
+;; the other documents with their summaries. Then what has happened since
+;; that entry: the project's commits, the handoff repository's lint
+;; diagnostics, pending entry and uncommitted changes, and the checks compared
+;; against the entry's results. Renders whatever parses and writes nothing.
+;; Paths are shown relative to the project.
 (: handle-start (-> Path String Status))
 (define (handle-start repository* arc)
   (define repository (normalize-path repository*))
@@ -316,6 +341,19 @@
   (when baseline
     (inline (build-path (log-entry-path arc-path (baseline-number baseline)) entry-file)))
 
+  ;; Each with its summary, so an agent can choose what to open, except the
+  ;; workflow, which is inlined above.
+  (section "other documents")
+  (define workflow-path (and start* (simplify-path (resolve (start-workflow start*)))))
+  (define documents
+    (filter-not (λ ([document : (Pairof String Path)]) (equal? (simplify-path (cdr document)) workflow-path))
+            (arc-documents arc-path repository)))
+  (when (empty? documents)
+    (printf "nothing\n"))
+  (for ([document (in-list documents)])
+    (define summary (if (markdown-file? (cdr document)) (document-summary (file->string (cdr document))) ""))
+    (printf "- ~a~a\n" (car document) (if (string=? summary "") "" (string-append ": " summary))))
+
   (section "project repository status")
   (report-project project baseline)
 
@@ -328,14 +366,6 @@
      (printf "lint: ~a error~a\n" (length diagnostics) (if (= (length diagnostics) 1) "" "s"))
      (for ([diagnostic (in-list diagnostics)])
        (printf "  ~a: ~a\n" (show-path (diagnostic-path diagnostic)) (diagnostic-message diagnostic)))])
-  ;; Files beside the layout, such as arc-local topic documents, by name only,
-  ;; so that one no Read-first entry names is still known to exist.
-  (define layout (list* start-file checks-file log-directory state-files))
-  (define others
-    (for/list : (Listof String) ([name (in-list (sort (map path->string (directory-list arc-path)) string<?))]
-                                 #:unless (member name layout))
-      (format "arc:~a~a" name (if (directory-exists? (build-path arc-path name)) "/" ""))))
-  (printf "other arc files: ~a\n" (if (empty? others) "none" (string-join others ", ")))
   (define pending (pending-log-entry arc-path))
   (cond
     [pending
@@ -511,7 +541,7 @@
     (printf "path: ~a\n" (pattern-path pattern))
     (for ([shadowed (in-list (pattern-shadowed pattern))])
       (printf "shadows: ~a\n" shadowed))
-    (printf "summary: ~a\n" (pattern-summary (file->string (pattern-path pattern)))))
+    (printf "summary: ~a\n" (document-summary (file->string (pattern-path pattern)))))
   'success)
 
 ;; Print the path of the first HANDOFF.md installed under $XDG_DATA_DIRS, for
@@ -727,6 +757,13 @@
              (memf (λ ([check : check]) (equal? (check-id check) placeholder-check-id)) checks))
     (report! checks-path (format "check ~a is the placeholder from handoff new; replace it with the arc's checks"
                                  placeholder-check-id)))
+
+  ;; Every document start lists with a summary has one
+  (for ([document (in-list (arc-documents arc repository))]
+        #:when (markdown-file? (cdr document)))
+    (define issue (summary-issue (file->string (cdr document))))
+    (when issue
+      (report! (cdr document) issue)))
 
   ;; - The log path either does not exist or is a directory
   ;; - Every entry is a directory named a positive integer with no leading

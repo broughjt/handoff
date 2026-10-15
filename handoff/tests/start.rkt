@@ -79,23 +79,32 @@
                   "==> .scratch/handoff/arc/do-not-reopen.md <==\n\n"
                   "==> .scratch/handoff/arc/open-questions.md <==\n\n"
                   "==> .scratch/handoff/arc/review.md <==\n\n"
+                  "==> other documents <==\nnothing\n\n"
                   (format "==> project repository status <==\nrepository: ~a\nnow: "
                           (string-trim (path->string project) "/" #:left? #f))
-                  "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\nother arc files: none\npending log entry: none\nuncommitted: none\n\n"
+                  "==> handoff repository status <==\nrepository: .scratch/handoff\nlint: no errors\npending log entry: none\nuncommitted: none\n\n"
                   "==> checks <==\nno earlier log entry to compare against\n\nid: marker\n"
                   "outcome: false\nexit: 1\n"
                   "output:\n  no marker\n"
                   "summary: 1 true, 1 false\n")
      (check-lacks output "at log/" "entry.md"))))
 
-(test-case "files beside the layout are listed by reference, not inlined"
+(test-case "documents are listed by reference with their summaries, not inlined"
   (call-with-start-arc
    (λ ([repository : Path] [arc : Path] [project : Path])
-     (write-file (build-path arc "failures.md") "secret contents")
+     (write-file (build-path arc "failures.md") "# Failures\n\nWhat failed\nand why.\n\nSecret contents.\n")
      (write-file (build-path arc "notes" "a.md") "more")
+     (write-file (build-path arc "script.sh") "echo")
+     (write-file (build-path repository "topic.md") "# Topic\n\nShared facts.\n")
+     (write-file (build-path repository "workflow-solo.md")
+                 "<!-- copied from workflow pattern solo (sha256:00) on 2026-10-15; verbatim -->\n# Solo\n\nCopied.\n")
      (define output (start! repository))
-     (check-contains output "\nother arc files: arc:failures.md, arc:notes/\n")
-     (check-lacks output "secret contents"))))
+     (check-contains output (string-append "==> other documents <==\n"
+                                           "- arc:failures.md: What failed and why.\n"
+                                           "- arc:notes/\n"
+                                           "- arc:script.sh\n"
+                                           "- handoff:topic.md: Shared facts.\n\n"))
+     (check-lacks output "Secret contents" "handoff:workflow-solo" "handoff:shared"))))
 
 (test-case "a multiline next renders without a trailing blank line"
   (call-with-start-arc

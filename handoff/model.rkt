@@ -53,7 +53,9 @@
          compare-results
          (struct-out pattern)
          pattern-name?
-         pattern-summary
+         document-summary
+         summary-issue
+         verbatim-copy?
          workflow-copy-name
          workflow-provenance
          strip-provenance
@@ -407,14 +409,43 @@
 (define (pattern-name? name)
   (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
 
-;; The first paragraph after a pattern's opening headings.
-(: pattern-summary (-> String String))
-(define (pattern-summary text)
+;; The lines of the first paragraph after a document's provenance line and
+;; opening headings. Workflows and topic documents share this layout.
+(: first-paragraph (-> String (Listof String)))
+(define (first-paragraph text)
   (define (heading? [line : String]) (regexp-match? #px"^ {0,3}#" line))
   (define (blank? [line : String]) (string=? (string-trim line) ""))
-  (define body (dropf (string-split text "\n" #:trim? #f)
-                      (λ ([line : String]) (or (blank? line) (heading? line)))))
-  (string-join (map string-trim (takef body (λ ([line : String]) (not (or (blank? line) (heading? line))))))))
+  (define (skip? [line : String]) (or (blank? line) (heading? line)))
+  (takef (dropf (string-split (strip-provenance text) "\n" #:trim? #f) skip?) (negate skip?)))
+
+;; A document's summary: its first paragraph, on one line.
+(: document-summary (-> String String))
+(define (document-summary text)
+  (string-join (map string-trim (first-paragraph text))))
+
+;; Openings that mark a paragraph as something other than prose
+(define non-prose-openings
+  (list #px"^[-*+]\\s"       ; bullet list
+        #px"^[0-9]+[.)]\\s"  ; ordered list
+        #px"^(```|~~~)"      ; code fence
+        #px"^\\|"            ; table
+        #px"^<"))            ; HTML
+
+;; Why a document has no usable summary, or #f when it has one.
+(: summary-issue (-> String (U String #f)))
+(define (summary-issue text)
+  (define paragraph (first-paragraph text))
+  (cond
+    [(empty? paragraph) "expected a summary, a paragraph of prose after the opening headings"]
+    [(let ([line (string-trim (first paragraph) #:right? #f)])
+       (ormap (λ ([opening : Regexp]) (regexp-match? opening line)) non-prose-openings))
+     "expected a summary, a paragraph of prose after the opening headings, not a list, code block, table or HTML"]
+    [else #f]))
+
+;; Whether a workflow file is a verbatim copy
+(: verbatim-copy? (-> String Boolean))
+(define (verbatim-copy? text)
+  (regexp-match? #px"^<!-- copied [^\n]*; verbatim -->\n" text))
 
 ;; Where a verbatim copy of the pattern lives, relative to the handoff
 ;; repository, which shares it between arcs.
