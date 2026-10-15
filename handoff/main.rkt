@@ -35,8 +35,6 @@
          git-repository?
          project-branch-head)
 
-(define output-lines 20)
-
 (module+ main
   (exit (main (current-command-line-arguments))))
 
@@ -615,85 +613,22 @@
                          arc (length diagnostics)
                          (string-join (map diagnostic->string diagnostics) "\n"))))
 
-;; Run the checks, printing each check's result as a record of labeled fields
-;; as soon as it and every check before it in file order have finished, so
-;; that the output does not depend on timing. Note each result's change since
-;; `baseline` when that has results, then summarize the run.
+;; Run the checks, printing each check's result as soon as it and every check
+;; before it in file order have finished, so that the output does not depend
+;; on timing. Note each result's change since `baseline` when that has
+;; results, then summarize the run.
 (: run-and-report (->* ((Listof check) Path) (#:baseline (U log-entry #f)) check-run))
 (define (run-and-report checks project #:baseline [baseline #f])
-  (define previous (let ([run (and baseline (log-entry-results baseline))])
-                     (if (check-run? run) (check-run-results run) null)))
-  (define number (and baseline (log-entry-number baseline)))
-  (printf "running ~a ~a\n" (length checks) (if (= (length checks) 1) "check" "checks"))
+  (write-string (render-run-start checks))
   (flush-output)
   (define run
     (run-checks checks project
                 #:on-result (λ ([result : check-result])
                               (newline)
-                              (report-result result (and number (compare-result result previous)) number)
+                              (write-string (render-compared-result result baseline))
                               (flush-output))))
-  (define results (check-run-results run))
-  (define removed (if number (removed-checks checks previous) null))
-  (unless (empty? removed)
-    (newline)
-    (for ([check (in-list removed)])
-      (printf "removed since log/~a: ~a (~a)\n" number (check-id check) (check-claim check))))
-  (define counts
-    (for*/list : (Listof String) ([outcome (in-list '(true false unknown timeout))]
-                                  [count (in-value (count (λ ([result : check-result])
-                                                            (eq? (check-result-outcome result) outcome))
-                                                          results))]
-                                  #:unless (zero? count))
-      (format "~a ~a" count outcome)))
-  (newline)
-  (printf "host: ~a, duration: ~a, summary: ~a\n"
-          (check-run-host run)
-          (seconds->string (check-run-duration run))
-          (if (empty? counts) "no checks" (string-join counts ", ")))
+  (write-string (render-run-end run baseline))
   run)
-
-;; Print one check's result, and its change since log/`number` when compared.
-(: report-result (-> check-result (U check-change #f) (U Exact-Positive-Integer #f) Void))
-(define (report-result result change number)
-  (define (field [name : String] [template : String] . [arguments : Any *])
-    (printf "~a: ~a\n" name (apply format template arguments)))
-  (define (print-output [label : String] [result : check-result])
-    (define lines (string-split (check-result-output result) "\n"))
-    (unless (empty? lines)
-      (define tail (drop lines (max 0 (- (length lines) output-lines))))
-      (printf "~a~a:\n" label (if (< (length tail) (length lines))
-                                  (format " (last ~a of ~a lines)" (length tail) (length lines))
-                                  ""))
-      (for ([line (in-list tail)])
-        (printf "  ~a\n" line))))
-  (define check (check-result-check result))
-  (define outcome (check-result-outcome result))
-  (define before (and change (check-change-before change)))
-  (define flipped? (and change (eq? (check-change-change change) 'flipped)))
-  (field "id" "~a" (check-id check))
-  (field "claim" "~a" (check-claim check))
-  (field "outcome" "~a" outcome)
-  (case (and change (check-change-change change))
-    [(flipped) (field "change" "was ~a at log/~a" (check-result-outcome (assert before)) number)]
-    [(redefined) (field "change" "definition changed since log/~a, where it was ~a"
-                        number (check-result-outcome (assert before)))]
-    [(new) (field "change" "new since log/~a" number)]
-    [else (void)])
-  (case outcome
-    [(true) (void)]
-    [(timeout) (field "timeout" "~a" (seconds->string (check-timeout check)))]
-    [else (field "exit" "~a" (check-result-exit result))])
-  (field "duration" "~a" (seconds->string (check-result-duration result)))
-  (when (or flipped? (not (eq? outcome 'true)))
-    (unless (zero? (check-result-truncated result))
-      (field "truncated" "~a bytes before the output were not kept" (check-result-truncated result)))
-    (print-output "output" result))
-  (when (and flipped? before)
-    (print-output (format "output at log/~a" number) before)))
-
-(: seconds->string (-> Real String))
-(define (seconds->string duration)
-  (string-append (~r duration #:precision '(= 1)) "s"))
 
 ;;; Reading an arc
 

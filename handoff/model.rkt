@@ -1,6 +1,7 @@
 #lang typed/racket/base
 
-(require racket/function
+(require racket/format
+         racket/function
          racket/list
          racket/match
          racket/math
@@ -73,7 +74,13 @@
          arc-baseline
          (struct-out diagnostic)
          diagnostic->string
-         lint)
+         lint
+         output-lines
+         seconds->string
+         render-run-start
+         render-compared-result
+         render-result
+         render-run-end)
 
 ;;; Layout
 
@@ -660,3 +667,99 @@
       (for/list : (Listof diagnostic) ([name (in-list (entry-log-invalid log))])
         (diagnostic (build-path log-path name)
                     "expected a log entry number, a positive integer without leading zeros")))]))
+
+;;; Rendering
+
+;; The most lines of a check's output shown in a report.
+(define output-lines 20)
+
+(: seconds->string (-> Real String))
+(define (seconds->string duration)
+  (string-append (~r duration #:precision '(= 1)) "s"))
+
+;; The line that opens a run's report.
+(: render-run-start (-> (Listof check) String))
+(define (render-run-start checks)
+  (format "running ~a ~a\n" (length checks) (if (= (length checks) 1) "check" "checks")))
+
+;; One check's result, with its change since `baseline` when that has results.
+(: render-compared-result (-> check-result (U log-entry #f) String))
+(define (render-compared-result result baseline)
+  (define previous (baseline-results baseline))
+  (if previous
+      (render-result result (compare-result result previous) (log-entry-number (assert baseline)))
+      (render-result result #f #f)))
+
+;; One check's result as a record of labeled fields, with its change since
+;; log/`number` when compared.
+(: render-result (-> check-result (U check-change #f) (U Exact-Positive-Integer #f) String))
+(define (render-result result change number)
+  (define out (open-output-string))
+  (define (field [name : String] [template : String] . [arguments : Any *])
+    (fprintf out "~a: ~a\n" name (apply format template arguments)))
+  (define (print-output [label : String] [result : check-result])
+    (define lines (string-split (check-result-output result) "\n"))
+    (unless (empty? lines)
+      (define tail (drop lines (max 0 (- (length lines) output-lines))))
+      (fprintf out "~a~a:\n" label (if (< (length tail) (length lines))
+                                       (format " (last ~a of ~a lines)" (length tail) (length lines))
+                                       ""))
+      (for ([line (in-list tail)])
+        (fprintf out "  ~a\n" line))))
+  (define check (check-result-check result))
+  (define outcome (check-result-outcome result))
+  (define before (and change (check-change-before change)))
+  (define flipped? (and change (eq? (check-change-change change) 'flipped)))
+  (field "id" "~a" (check-id check))
+  (field "claim" "~a" (check-claim check))
+  (field "outcome" "~a" outcome)
+  (case (and change (check-change-change change))
+    [(flipped) (field "change" "was ~a at log/~a" (check-result-outcome (assert before)) number)]
+    [(redefined) (field "change" "definition changed since log/~a, where it was ~a"
+                        number (check-result-outcome (assert before)))]
+    [(new) (field "change" "new since log/~a" number)]
+    [else (void)])
+  (case outcome
+    [(true) (void)]
+    [(timeout) (field "timeout" "~a" (seconds->string (check-timeout check)))]
+    [else (field "exit" "~a" (check-result-exit result))])
+  (field "duration" "~a" (seconds->string (check-result-duration result)))
+  (when (or flipped? (not (eq? outcome 'true)))
+    (unless (zero? (check-result-truncated result))
+      (field "truncated" "~a bytes before the output were not kept" (check-result-truncated result)))
+    (print-output "output" result))
+  (when (and flipped? before)
+    (print-output (format "output at log/~a" number) before))
+  (get-output-string out))
+
+;; What closes a run's report: the checks removed since `baseline` when that
+;; has results, then the run's host, duration and counts of outcomes.
+(: render-run-end (-> check-run (U log-entry #f) String))
+(define (render-run-end run baseline)
+  (define out (open-output-string))
+  (define results (check-run-results run))
+  (define previous (baseline-results baseline))
+  (define removed (if previous (removed-checks (map check-result-check results) previous) null))
+  (unless (empty? removed)
+    (newline out)
+    (for ([check (in-list removed)])
+      (fprintf out "removed since log/~a: ~a (~a)\n"
+               (log-entry-number (assert baseline)) (check-id check) (check-claim check))))
+  (define counts
+    (for*/list : (Listof String) ([outcome (in-list '(true false unknown timeout))]
+                                  [count (in-value (count (λ ([result : check-result])
+                                                            (eq? (check-result-outcome result) outcome))
+                                                          results))]
+                                  #:unless (zero? count))
+      (format "~a ~a" count outcome)))
+  (fprintf out "\nhost: ~a, duration: ~a, summary: ~a\n"
+           (check-run-host run)
+           (seconds->string (check-run-duration run))
+           (if (empty? counts) "no checks" (string-join counts ", ")))
+  (get-output-string out))
+
+;; The results of the baseline's run, or #f without a baseline with results.
+(: baseline-results (-> (U log-entry #f) (U (Listof check-result) #f)))
+(define (baseline-results baseline)
+  (define run (and baseline (log-entry-results baseline)))
+  (and (check-run? run) (check-run-results run)))

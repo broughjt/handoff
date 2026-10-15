@@ -218,7 +218,7 @@
 (define (run-with [ids : (Listof String)])
   (check-run "murph" 0 1.0 (branch-head "main" "abc")
              (for/list ([id (in-list ids)])
-               (check-result (make-check id "claim" "true" 60) 'true 0.5 "" 0 0))))
+               (check-result (make-check id "holds" "true" 60) 'true 0.5 "" 0 0))))
 
 (define (entry [number : Exact-Positive-Integer]
                #:entry [text : (U String #f) "# Did a thing\n"]
@@ -327,3 +327,78 @@
 (test-case "a log entry name that is not an entry number is reported"
   (check-equal? (lint-messages (with-log (entry 1) #:invalid '("01")))
                 '(("log/01" . "expected a log entry number, a positive integer without leading zeros"))))
+
+;;; Rendering
+
+(define (result [outcome : Outcome]
+                #:id [id : String "x"]
+                #:command [command : String "true"]
+                #:output [output : String ""]
+                #:truncated [truncated : Natural 0])
+  (check-result (make-check id "holds" command 60) outcome 0.5 output truncated
+                (case outcome [(true) 0] [(false) 1] [(unknown) 2] [else #f])))
+
+(test-case "a true result shows no exit or output"
+  (check-equal? (render-result (result 'true #:output "noise\n") #f #f)
+                "id: x\nclaim: holds\noutcome: true\nduration: 0.5s\n"))
+
+(test-case "a false result shows its exit and output"
+  (check-equal? (render-result (result 'false #:output "a\nb\n") #f #f)
+                "id: x\nclaim: holds\noutcome: false\nexit: 1\nduration: 0.5s\noutput:\n  a\n  b\n"))
+
+(test-case "a timeout shows the check's timeout instead of an exit"
+  (check-equal? (render-result (result 'timeout) #f #f)
+                "id: x\nclaim: holds\noutcome: timeout\ntimeout: 60.0s\nduration: 0.5s\n"))
+
+(test-case "only the last lines of long output are shown"
+  (define output (string-join (for/list : (Listof String) ([n (in-range 1 26)]) (number->string n)) "\n"))
+  (define text (render-result (result 'false #:output output) #f #f))
+  (check-true (string-contains? text "output (last 20 of 25 lines):\n  6\n"))
+  (check-true (string-suffix? text "  25\n")))
+
+(test-case "output dropped at capture is counted"
+  (check-true (string-contains? (render-result (result 'false #:output "end" #:truncated 9) #f #f)
+                                "truncated: 9 bytes before the output were not kept\n")))
+
+(test-case "a flipped result shows its output now and at the earlier entry"
+  (define now (result 'true #:output "fine"))
+  (define before (result 'false #:output "broken"))
+  (check-equal? (render-result now (check-change now before 'flipped) 3)
+                "id: x\nclaim: holds\noutcome: true\nchange: was false at log/3\nduration: 0.5s\noutput:\n  fine\noutput at log/3:\n  broken\n"))
+
+(test-case "a redefined result names its earlier outcome"
+  (define now (result 'true))
+  (check-true (string-contains? (render-result now (check-change now (result 'false) 'redefined) 3)
+                                "change: definition changed since log/3, where it was false\n")))
+
+(test-case "a new result says so"
+  (define now (result 'true))
+  (check-true (string-contains? (render-result now (check-change now #f 'new) 3) "change: new since log/3\n")))
+
+(test-case "an unchanged result has no change line"
+  (define now (result 'true))
+  (check-equal? (render-result now (check-change now now 'unchanged) 3) (render-result now #f #f)))
+
+(test-case "a result is compared against the baseline's results"
+  (define baseline (entry 2 #:results (run-with '("x"))))
+  (check-true (string-contains? (render-compared-result (result 'false) baseline) "change: was true at log/2\n")))
+
+(test-case "a result is not compared without a baseline with results"
+  (check-equal? (render-compared-result (result 'false) (entry 2 #:results (failure "bad")))
+                (render-result (result 'false) #f #f)))
+
+(test-case "a run opens with the number of checks"
+  (check-equal? (render-run-start (list (make-check "x" "c" "true" 60))) "running 1 check\n")
+  (check-equal? (render-run-start '()) "running 0 checks\n"))
+
+(test-case "a run closes with its host, duration and counts of outcomes"
+  (define run (check-run "murph" 0 71.46 (branch-head "main" "abc")
+                         (list (result 'true) (result 'false #:id "y") (result 'true #:id "z"))))
+  (check-equal? (render-run-end run #f) "\nhost: murph, duration: 71.5s, summary: 2 true, 1 false\n"))
+
+(test-case "a run without checks says so"
+  (check-equal? (render-run-end (run-with '()) #f) "\nhost: murph, duration: 1.0s, summary: no checks\n"))
+
+(test-case "checks removed since the baseline are listed before the summary"
+  (check-equal? (render-run-end (run-with '("x")) (entry 2 #:results (run-with '("x" "gone"))))
+                "\nremoved since log/2: gone (holds)\n\nhost: murph, duration: 1.0s, summary: 1 true\n"))
