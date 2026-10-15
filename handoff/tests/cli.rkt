@@ -33,22 +33,22 @@
 [[check]]
 id = "yes"
 claim = "holds"
-run = "echo hidden"
+command = "echo hidden"
 
 [[check]]
 id = "no"
 claim = "does not hold"
-run = "echo failed; exit 1"
+command = "echo failed; exit 1"
 
 [[check]]
 id = "unknown"
 claim = "cannot observe"
-run = "echo unavailable; exit 3"
+command = "echo unavailable; exit 3"
 
 [[check]]
 id = "slow"
 claim = "times out"
-run = "echo waiting; sleep 5"
+command = "echo waiting; sleep 5"
 timeout = 0.1
 TOML
                  )
@@ -76,7 +76,7 @@ TOML
 (test-case "check succeeds with true or no checks"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
-     (for ([contents (in-list '("[[check]]\nid = \"yes\"\nclaim = \"holds\"\nrun = \"true\"\n" ""))])
+     (for ([contents (in-list '("[[check]]\nid = \"yes\"\nclaim = \"holds\"\ncommand = \"true\"\n" ""))])
        (write-file (build-path arc "checks.toml") contents)
        (define result (handoff* repository "check" "arc"))
        (check-equal? (outcome-code result) 0 (outcome-stderr result))
@@ -87,7 +87,7 @@ TOML
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
      (write-file (build-path arc "checks.toml")
-                 "[[check]]\nid = \"root\"\nclaim = \"runs in the project root\"\nrun = \"test -d .scratch/handoff\"\n")
+                 "[[check]]\nid = \"root\"\nclaim = \"runs in the project root\"\ncommand = \"test -d .scratch/handoff\"\n")
      (for ([directory (in-list (list repository arc))])
        (define result (handoff directory "check"))
        (check-equal? (outcome-code result) 0 (outcome-stdout result))))))
@@ -95,7 +95,7 @@ TOML
 (test-case "check shows only the tail of the output"
   (call-with-arc
    (λ ([repository : Path] [arc : Path])
-     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"fails\"\nrun = \"seq 1 100; exit 1\"\n")
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"fails\"\ncommand = \"seq 1 100; exit 1\"\n")
      (define result (handoff* repository "check"))
      (check-equal? (outcome-code result) 1)
      (define stdout (outcome-stdout result))
@@ -140,7 +140,7 @@ TOML
    (λ ([repository : Path] [arc : Path])
      (for ([timeout (in-list '("true" "nan" "inf" "-inf" "0" "-1"))])
        (write-file (build-path arc "checks.toml")
-                   (format "[[check]]\nid = \"x\"\nclaim = \"holds\"\nrun = \"true\"\ntimeout = ~a\n" timeout))
+                   (format "[[check]]\nid = \"x\"\nclaim = \"holds\"\ncommand = \"true\"\ntimeout = ~a\n" timeout))
        (define result (handoff* repository "check"))
        (check-equal? (outcome-code result) 2 timeout)
        (check-true (string-contains? (outcome-stderr result) "timeout must be") timeout)))))
@@ -161,7 +161,7 @@ TOML
      (delete-file (build-path arc "start.toml"))
      (delete-file (build-path arc "arc.md"))
      (make-directory (build-path arc "arc.md"))
-     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nrun = \"true\"\n")
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\ncommand = \"true\"\n")
      (define entry (write-log-entry arc "1" #:results "[broken"))
      (commit-all repository)
      (delete-file (build-path entry "entry.md"))

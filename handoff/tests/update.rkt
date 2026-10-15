@@ -16,12 +16,12 @@
 [[check]]
 id = "yes"
 claim = "holds"
-run = "true"
+command = "true"
 
 [[check]]
 id = "no"
 claim = "does not hold"
-run = "echo failed; exit 1"
+command = "echo failed; exit 1"
 TOML
   )
 
@@ -88,7 +88,7 @@ TOML
      (check-equal? (outcome-code (begin-update* repository)) 0)
      (define entry-path (build-path arc "log" "1"))
      (write-file (build-path entry-path "entry.md") entry)
-     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"fixed\"\nclaim = \"holds now\"\nrun = \"true\"\n")
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"fixed\"\nclaim = \"holds now\"\ncommand = \"true\"\n")
      (check-equal? (outcome-code (begin-update* repository)) 0)
      (check-equal? (sort (map path->string (directory-list entry-path)) string<?)
                    '("entry.md" "results.toml"))

@@ -10,7 +10,7 @@
 ;; Checks that read a marker file in the project, so a test can flip them.
 (: checks-text (-> Path String))
 (define (checks-text project)
-  (format "[[check]]\nid = \"marker\"\nclaim = \"the marker exists\"\nrun = \"test -e ~a || { echo no marker; exit 1; }\"\n\n[[check]]\nid = \"steady\"\nclaim = \"always holds\"\nrun = \"true\"\n"
+  (format "[[check]]\nid = \"marker\"\nclaim = \"the marker exists\"\ncommand = \"test -e ~a || { echo no marker; exit 1; }\"\n\n[[check]]\nid = \"steady\"\nclaim = \"always holds\"\ncommand = \"true\"\n"
           (build-path project "marker")))
 
 (define (project-of [repository : Path]) (simplify-path (build-path repository 'up 'up)))
@@ -141,12 +141,12 @@
    (λ ([repository : Path] [arc : Path] [project : Path])
      (write-file (build-path project "marker") "")
      (write-file (build-path arc "checks.toml")
-                 (string-append (checks-text project) "\n[[check]]\nid = \"gone\"\nclaim = \"will be removed\"\nrun = \"true\"\n"))
+                 (string-append (checks-text project) "\n[[check]]\nid = \"gone\"\nclaim = \"will be removed\"\ncommand = \"true\"\n"))
      (record! repository arc "First")
      (delete-file (build-path project "marker"))
      (write-file (build-path arc "checks.toml")
-                 (string-append (string-replace (checks-text project) "run = \"true\"" "run = \"exit 0\"")
-                                "\n[[check]]\nid = \"fresh\"\nclaim = \"is new\"\nrun = \"true\"\n"))
+                 (string-append (string-replace (checks-text project) "command = \"true\"" "command = \"exit 0\"")
+                                "\n[[check]]\nid = \"fresh\"\nclaim = \"is new\"\ncommand = \"true\"\n"))
      (define output (start! repository))
      (check-regexp-match #px"compared against log/1, recorded on \\S+ at \\d{4}-\\d\\d-\\d\\dT" output)
      (check-contains output

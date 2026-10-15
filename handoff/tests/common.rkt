@@ -55,7 +55,7 @@
      (write-file (build-path arc "start.toml") start-text)
      (write-file (build-path repository "shared.md") "workflow")
      (write-file (build-path arc "checks.toml")
-                 "[[check]]\nid = \"x\"\nclaim = \"example\"\nrun = \"touch SHOULD_NOT_EXIST\"\n")
+                 "[[check]]\nid = \"x\"\nclaim = \"example\"\ncommand = \"touch SHOULD_NOT_EXIST\"\n")
      (body repository arc))))
 
 ;; Git in `directory`, failing the test when it exits non-zero.

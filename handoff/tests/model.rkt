@@ -52,7 +52,7 @@
 (define (load [text : String]) (parse-checks (parse-toml text)))
 
 (test-case "checks keep file order and default their timeout"
-  (define checks (load "[[check]]\nid = \"second\"\nclaim = \"two\"\nrun = \"true\"\ntimeout = 5\n\n[[check]]\nid = \"first\"\nclaim = \"one\"\nrun = \"false\"\n"))
+  (define checks (load "[[check]]\nid = \"second\"\nclaim = \"two\"\ncommand = \"true\"\ntimeout = 5\n\n[[check]]\nid = \"first\"\nclaim = \"one\"\ncommand = \"false\"\n"))
   (check-equal? (map check-id checks) '("second" "first"))
   (check-equal? (first checks) (make-check "second" "two" "true" 5))
   (check-equal? (check-timeout (second checks)) default-timeout))
@@ -61,21 +61,22 @@
   (check-equal? (load "") '()))
 
 (test-case "malformed checks are rejected"
-  (for ([text (in-list (list "[[check]]\nid = \"x\"\nrun = \"true\"\n"
+  (for ([text (in-list (list "[[check]]\nid = \"x\"\ncommand = \"true\"\n"
                              "[[check]]\nid = \"x\"\nclaim = \"c\"\n"
-                             "[[check]]\nclaim = \"c\"\nrun = \"true\"\n"
-                             "[[check]]\nid = \"x\"\nclaim = \"c\"\nrun = \"true\"\nexpect = 0\n"
-                             "[[check]]\nid = \"x\"\nclaim = \" \"\nrun = \"true\"\n"
-                             "[[check]]\nid = \"x\"\nclaim = \"c\"\nrun = \"true\"\ntimeout = 0\n"
-                             "[[check]]\nid = \"x\"\nclaim = \"c\"\nrun = \"true\"\n[[check]]\nid = \"x\"\nclaim = \"d\"\nrun = \"true\"\n"
-                             "[check]\nid = \"x\"\nclaim = \"c\"\nrun = \"true\"\n"
+                             "[[check]]\nclaim = \"c\"\ncommand = \"true\"\n"
+                             "[[check]]\nid = \"x\"\nclaim = \"c\"\ncommand = \"true\"\nexpect = 0\n"
+                             "[[check]]\nid = \"x\"\nclaim = \" \"\ncommand = \"true\"\n"
+                             "[[check]]\nid = \"x\"\nclaim = \"c\"\ncommand = \"true\"\ntimeout = 0\n"
+                             "[[check]]\nid = \"x\"\nclaim = \"c\"\ncommand = \"true\"\n[[check]]\nid = \"x\"\nclaim = \"d\"\ncommand = \"true\"\n"
+                             "[check]\nid = \"x\"\nclaim = \"c\"\ncommand = \"true\"\n"
+                             "[[check]]\nid = \"x\"\nclaim = \"c\"\nrun = \"true\"\n"
                              "check = 1\n"
                              "other = 1\n"))])
     (check-exn exn:fail:handoff? (λ () (load text)) text)))
 
 (test-case "errors name the check"
   (check-exn #rx"check x is missing claim"
-             (λ () (load "[[check]]\nid = \"x\"\nrun = \"true\"\n"))))
+             (λ () (load "[[check]]\nid = \"x\"\ncommand = \"true\"\n"))))
 
 ;;; results.toml
 

@@ -88,7 +88,7 @@
      (check-false (git* repository "rev-parse" "--verify" "--quiet" "HEAD"))
      (write-file (build-path arc "start.toml")
                  "next = \"Begin\"\nworkflow = \"handoff:workflow-solo.md\"\nread_first = []\n")
-     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"holds\"\nrun = \"true\"\n")
+     (write-file (build-path arc "checks.toml") "[[check]]\nid = \"x\"\nclaim = \"holds\"\ncommand = \"true\"\n")
      (check-equal? (outcome-code (handoff* repository "lint" "offsite")) 0))))
 
 (test-case "the placeholder check fails lint, but check runs it as unknown"

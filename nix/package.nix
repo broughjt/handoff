@@ -95,7 +95,7 @@ stdenvNoCC.mkDerivation {
     mkdir -p $repository/arc
     git init -q $repository
     touch $repository/arc/start.toml
-    printf '[[check]]\nid = "x"\nclaim = "holds"\nrun = "true"\n' > $repository/arc/checks.toml
+    printf '[[check]]\nid = "x"\nclaim = "holds"\ncommand = "true"\n' > $repository/arc/checks.toml
     $out/bin/handoff --repository $repository check
     $out/bin/handoff workflow list | grep -qx 'name: agent-implements'
     test "$($out/bin/handoff guide)" = $out/share/handoff/HANDOFF.md

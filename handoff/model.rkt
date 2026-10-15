@@ -292,12 +292,12 @@
       (define context (if (string? id)
                           (format "check ~a" id)
                           (format "check[~a]" index)))
-      (expect-fields table (list* 'id 'claim 'run required) (cons 'timeout optional) context)
+      (expect-fields table (list* 'id 'claim 'command required) (cons 'timeout optional) context)
       (define timeout (hash-ref table 'timeout (const default-timeout)))
       (define check*
         (check (expect-non-empty-string table 'id context)
                (expect-non-empty-string table 'claim context)
-               (expect-non-empty-string table 'run context)
+               (expect-non-empty-string table 'command context)
                (if (and (real? timeout) (positive? timeout) (not (infinite? timeout)))
                    timeout
                    (raise-handoff-error "~a: timeout must be a positive number of seconds" context))))
@@ -331,7 +331,7 @@
     (fprintf out "\n[[check]]\n")
     (field "id" (toml-string (check-id check)))
     (field "claim" (toml-string (check-claim check)))
-    (field "run" (toml-string (check-command check)))
+    (field "command" (toml-string (check-command check)))
     (field "timeout" (number->string (if (exact-integer? timeout)
                                          timeout
                                          (exact->inexact timeout))))
@@ -483,10 +483,10 @@
    "[[check]]\n"
    "id = " (toml-string placeholder-check-id) "\n"
    "claim = " (toml-string "A natural language claim that is either true or false") "\n"
-   "run = " (toml-string (string-append
-                          "echo \"Replace this placeholder from handoff new with the arc's checks. "
-                          "run is a shell command, run from the project root, that exits 0 when "
-                          "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
+   "command = " (toml-string (string-append
+                              "echo \"Replace this placeholder from handoff new with the arc's checks. "
+                              "command is a shell command, run from the project root, that exits 0 when "
+                              "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
    "\n"
    "timeout = " (number->string default-timeout) "\n"))
 
