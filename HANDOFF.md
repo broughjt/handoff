@@ -24,7 +24,7 @@ Arc directories are expected to contain the following:
 
 | File | Contains |
 |---|---|
-| `start.toml` | where the next session should start: `next`, `workflow`, and `read_first` |
+| `start.toml` | where the next session should start: `next`, `workflow`, and `read-first` |
 | `arc.md` | why the work exists, what done looks like, and the route to get there |
 | `tasks.md` | tasks and their status |
 | `do-not-reopen.md` | settled scope and rejected approaches, each with a reason |
@@ -56,16 +56,16 @@ starting with the unterminated-string case.
 """
 workflow = "handoff:workflow-agent-implements.md"
 
-[[read_first]]
+[[read-first]]
 path = "arc:plan-recovery.md"
 reason = "the plan for this task"
 
-[[read_first]]
+[[read-first]]
 path = "project:src/parse.rs"
 reason = "the recovery hooks go in `Parser::next_token`"
 ```
 
-The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read_first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*).
+The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read-first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*).
 
 ### `arc.md`
 
@@ -73,7 +73,7 @@ The `arc.md` file describes the goal of the arc. It says why the work exists and
 
 ### `tasks.md`
 
-The `tasks.md` file contains a list of tasks for the arc, each with a checkbox. Task entries should describe a piece of work concretely enough to begin. Extra detail beyond a few lines of description should go in a task document, and a `read_first` in `start.toml` should be added to reference it when that task is next. Task entries can declare task-local overrides of the workflow by referencing the workflow in their description, e.g. `handoff:workflow-design-first-tdd.md`. When you finish a task, keep the entry in the task list (do not delete it), check its box, and write the date and, if there is one, the subject of the relevant commit. When a task is abandoned, delete its entry. Abandoning a task tagged `user` is itself a decision, so it needs the user's agreement. If a future agent might propose the task again, record why it was dropped in `do-not-reopen.md`. If you discover facts that would be relevant to future sessions while executing a task, add that information to a topic document (see *Storing findings*), not to the task's entry.
+The `tasks.md` file contains a list of tasks for the arc, each with a checkbox. Task entries should describe a piece of work concretely enough to begin. Extra detail beyond a few lines of description should go in a task document, and a `read-first` in `start.toml` should be added to reference it when that task is next. Task entries can declare task-local overrides of the workflow by referencing the workflow in their description, e.g. `handoff:workflow-design-first-tdd.md`. When you finish a task, keep the entry in the task list (do not delete it), check its box, and write the date and, if there is one, the subject of the relevant commit. When a task is abandoned, delete its entry. Abandoning a task tagged `user` is itself a decision, so it needs the user's agreement. If a future agent might propose the task again, record why it was dropped in `do-not-reopen.md`. If you discover facts that would be relevant to future sessions while executing a task, add that information to a topic document (see *Storing findings*), not to the task's entry.
 
 Example:
 
@@ -107,7 +107,7 @@ Example:
 
 ### Other files
 
-Sometimes it is useful for tasks to have associated files, which we call **task documents**. Examples include a plan for the agent executing a task to follow (`arc:plan-<task>.md`), the verdict after running a spike (`arc:spike-<slug>.md`), or findings from a review (`arc:review-<slug>.md`). When a task is current, `start.toml` should list these files as `read_first` entries. Durable facts found during a task belong in topic documents as soon as they are found (see *Storing findings*), so when the task closes, check that nothing durable is left in its task documents, and then remove them with `git rm`.
+Sometimes it is useful for tasks to have associated files, which we call **task documents**. Examples include a plan for the agent executing a task to follow (`arc:plan-<task>.md`), the verdict after running a spike (`arc:spike-<slug>.md`), or findings from a review (`arc:review-<slug>.md`). When a task is current, `start.toml` should list these files as `read-first` entries. Durable facts found during a task belong in topic documents as soon as they are found (see *Storing findings*), so when the task closes, check that nothing durable is left in its task documents, and then remove them with `git rm`.
 
 An arc may also contain arc-local topic documents (see *Storing findings*) and forked or created workflows (see *Workflows*).
 
