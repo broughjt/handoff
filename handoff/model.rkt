@@ -101,6 +101,7 @@
 ;; The expected layout of a handoff arc directory
 (define start-file "start.toml")
 (define checks-file "checks.toml")
+;; TODO: I think this would be better as a locally defined map in `new-arc-files`
 (define state-headings
   (list (cons "arc.md" #f)
         (cons "tasks.md" "Tasks")
@@ -127,6 +128,8 @@
 (define (log-entry-path arc number)
   (build-path arc log-directory (number->string number)))
 
+;; TODO: Do we parse markdown headlines anywhere else?
+
 ;; Parse the text of a log entry's opening markdown heading, which must occur on
 ;; its first nonblank line.
 (: entry-headline (-> String String))
@@ -151,6 +154,7 @@
    [workflow : scope-path]
    [read-first : (Listof read-first)])
   #:transparent)
+;; Maybe put in its own section since other things use scope paths besides the start.toml struct
 (struct scope-path ([scope : Scope] [path : Path]) #:transparent)
 (define-type Scope (U 'arc 'handoff 'project))
 (struct read-first ([path : scope-path] [reason : String]) #:transparent)
@@ -175,6 +179,7 @@
   (define fail
     (thunk
      (raise-handoff-error "~s: expected arc:, handoff:, or project: followed by a relative file path without '..'" text)))
+  ;; Is this something we could lift into the regex and define globally so other functions could use it? I'm thinking something like greping for the scope-path regex in the future
   (match (regexp-match #rx"^([^:]*):(.*)$" text)
     [(list _ (? string? scope-name) (? string? relative))
      (define scope : Scope
@@ -205,6 +210,7 @@
 
 ;;; checks.toml and results.toml
 
+;; TODO: Put all global constants at the top of the file?
 (define default-timeout : Positive-Real 60)
 
 (struct check ([id : String]
@@ -371,12 +377,16 @@
     (field "output" (toml-string (check-result-output result))))
   (get-output-string out))
 
+;; TODO: rename to format-branch-head?
+
 (: describe-branch-head (-> branch-head String))
 (define (describe-branch-head branch-head*)
   (define head (branch-head-head branch-head*))
   (format "~a at ~a"
           (or (branch-head-branch branch-head*) "a detached HEAD")
           (if head (substring head 0 (min 12 (string-length head))) "no commit")))
+
+;; TODO: Really want to get rid of these two
 
 ;; Seconds since the epoch as an ISO 8601 datetime in UTC.
 (: timestamp->string (-> Integer String))
@@ -389,6 +399,8 @@
   (substring (timestamp->string seconds) 0 10))
 
 ;;; Comparing runs
+
+;; Is this comparison code systematic? Should false or unknown with different output count as a diff?
 
 (define-type Change (U 'unchanged 'flipped 'redefined 'new))
 
@@ -419,11 +431,17 @@
              #:unless (member (check-id (check-result-check result)) ids))
     (check-result-check result)))
 
+;; TODO: This should be renamed
+
+;; TODO: Why do we care if there are multiple copies? Should we just list one instead of taking care to find and list shadows?
+
 ;;; Workflow patterns and new arcs
 
 ;; A workflow pattern's file, with the files of the same name in lower
 ;; precedence directories that it shadows.
 (struct pattern ([name : String] [path : Path] [shadowed : (Listof Path)]) #:transparent)
+
+;; TODO: When we define string predicates that are literally just regexp-match? the-regex, we should just export the regex globally
 
 ;; A pattern's name is its file name without `.md`. We use lowercase only so
 ;; that a README.md sitting in the same directory as the patterns does not
@@ -432,10 +450,13 @@
 (define (pattern-name? name)
   (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
 
+;; TODO: Move this to a section for doing text wrangling on markdown files
+
 ;; The lines of the first paragraph after a document's provenance line and
 ;; opening headings. Workflows and topic documents share this layout.
 (: first-paragraph (-> String (Listof String)))
 (define (first-paragraph text)
+  ;; TODO: Export this as a regex constant
   (define (heading? [line : String]) (regexp-match? #px"^ {0,3}#" line))
   (define (blank? [line : String]) (string=? (string-trim line) ""))
   (define (skip? [line : String]) (or (blank? line) (heading? line)))
@@ -465,6 +486,8 @@
      "expected a summary, a paragraph of prose after the opening headings, not a list, code block, table or HTML"]
     [else #f]))
 
+;; TODO: Make the workflow heading systematic based on what is now described in HANDOFF.md and the skills
+
 ;; Whether a workflow file is a verbatim copy
 (: verbatim-copy? (-> String Boolean))
 (define (verbatim-copy? text)
@@ -476,11 +499,15 @@
 (define (workflow-copy-name name)
   (string-append "workflow-" name ".md"))
 
+;; This is part of the "make it systematic" TODO a few lines up
+
 ;; The line opening a workflow copied verbatim or forked from `source`, which
 ;; describes a pattern ("workflow spike") or is a reference to a file,
 ;; when the source's contents were `text`. The hash says whether the source has
 ;; changed since. For a verbatim copy, also include whether the copy was
 ;; amended.
+
+;; TODO: Isn't it the case that verbatim copies shouldn't be amended?
 (: workflow-provenance (-> (U 'copied 'forked) String String String String))
 (define (workflow-provenance how source text date)
   (format "<!-- ~a from ~a (sha256:~a) on ~a~a -->\n"
@@ -494,6 +521,8 @@
 (: strip-provenance (-> String String))
 (define (strip-provenance text)
   (regexp-replace #px"^<!-- (copied|forked|created) [^\n]*-->\n" text ""))
+
+;; TODO: Now we're talking about checks again, why is it here?
 
 (define placeholder-check-id "replace-me")
 
@@ -513,6 +542,8 @@
                               "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
    "\n"
    "timeout = " (number->string default-timeout) "\n"))
+
+;; TODO: This feels like it should live below the definition of the arc struct
 
 (: new-arc-files (-> String (U scope-path #f) (Listof (Pairof String String))))
 (define (new-arc-files name workflow)
@@ -538,7 +569,7 @@
 ;; `start` did not read; `workflow-text` is #f when the workflow is missing.
 ;; Each state file is paired with its contents, #f when it is missing.
 (struct arc ([name : String]
-             [directory : Path]
+             [directory : Path] ;; TODO: What does `directory` store?
              [repository : Path]
              [project : Path]
              [start : (Read start)]
@@ -550,14 +581,20 @@
              [log : entry-log])
   #:transparent)
 
+;; TODO: At least choose a different name, or maybe remov
+
 ;; A scope path from start.toml, resolved on this machine.
 (struct reference ([scope-path : scope-path] [path : Path] [exists? : Boolean]) #:transparent)
+
+;; TODO: This feels like it should be split into Markdown files and not markdown files
 
 ;; A file or directory beside the arc's layout, or a Markdown file at the
 ;; handoff repository's root other than a verbatim workflow copy. `label` is
 ;; its scoped name, with a trailing slash for a directory, and `text` is #f for
 ;; anything but a Markdown file.
 (struct document ([label : String] [path : Path] [text : (U String #f)]) #:transparent)
+
+;; TODO: Bad name
 
 ;; The arc's log directory. `entries` are ascending by number, `invalid` are
 ;; the names that are not entry numbers, and `pending` is the number of the

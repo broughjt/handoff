@@ -91,7 +91,7 @@
    #:usage-help
    "Commands:"
    "  list      list handoff arcs"
-   "  start     get the brief for starting work on a handoff arc"
+   "  start     get a brief for starting work on a handoff arc"
    "  check     run the commands in checks.toml and report their results"
    "  lint      validate expected structure of a handoff arc"
    "  update    record a log entry: --begin runs the checks and records them, --commit commits"
