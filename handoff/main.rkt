@@ -101,6 +101,7 @@
 (struct workflow-list-subcommand () #:transparent)
 (struct workflow-install-subcommand ([pattern : String]) #:transparent)
 (struct workflow-fork-subcommand ([arc : String]
+                                  ;; TODO: `name` or something else?
                                   [name : String]
                                   [source : String]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
@@ -179,6 +180,7 @@
       #:program program
       #:argv arguments
       #:help-labels
+      ;; TODO: name or something else?
       "<workflow> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
       #:args (arc [workflow #f])
       (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
@@ -203,6 +205,7 @@
     [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
                                subcommand)]))
 
+;; TODO: inline
 (: parse-workflow-subcommand (-> String (Listof String) Subcommand))
 (define (parse-workflow-subcommand verb arguments)
   (define program (string-append "handoff workflow " verb))
@@ -236,46 +239,26 @@
 (define (handle-lint repository arc)
   (error 'handle-lint "unimplemented"))
 
-;; Brief an agent to start work on a handoff arc (see `render-start`). Reads
-;; and runs everything first, then prints the brief, and writes nothing.
 (: handle-start (-> Path String Status))
 (define (handle-start repository* name)
   (error 'handle-start "unimplemented"))
 
-;; Recording a log entry happens in two command-line steps: `update --begin`
-;; records check results in a results.toml file for the pending log entry, the
-;; agent writes entry.md, and then `update --commit` commits them.
-
-;; Run the checks in checks.toml and record their results into the results.toml
-;; file of the pending log entry, creating the next log entry when none is
-;; pending. Rerunning replaces results.toml but leaves entry.md alone.
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin repository name)
   (error 'handle-update-begin "unimplemented"))
 
-;; Commit the pending log entry with the arc's changes and anything already
-;; staged in the handoff repository, unless `commit-refusal` refuses.
 (: handle-update-commit (-> Path String Status))
 (define (handle-update-commit repository name)
   (error 'handle-update-commit "unimplemented"))
 
-;; Print each pattern as a record of labeled fields: its name, the file that
-;; provides it, the files it shadows, and its summary.
 (: handle-workflow-list (-> Status))
 (define (handle-workflow-list)
   (error 'handle-workflow-list "unimplemented"))
 
-;; Print the path of the first HANDOFF.md installed under $XDG_DATA_DIRS, for
-;; the agent to read with its own tools.
 (: handle-guide (-> Status))
 (define (handle-guide)
   (error 'handle-guide "unimplemented"))
 
-;; Stubs out a new handoff arc. Creates each of the expected files with minimal
-;; content and without committing them. Takes an optional name or reference to a
-;; `workflow` and copies it. The generated arc will fail `handoff lint` until
-;; `next` in start.toml is written and the placeholder check in checks.toml is
-;; replaced (and the workflow pattern is written if one was not passed).
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new repository arc workflow)
   (error 'handle-new "unimplemented"))
@@ -284,9 +267,6 @@
 (define (handle-workflow-install repository name)
   (error 'handle-workflow-install "unimplemented"))
 
-;; Copy a pattern or an existing workflow file into the arc under a new name,
-;; for the agent to amend, recording where it was forked from and that file's
-;; hash. Leaves start.toml for the agent to point at the fork.
 (: handle-workflow-fork (-> Path String String String Status))
 (define (handle-workflow-fork repository arc name workflow)
   (error 'handle-workflow-fork "unimplemented"))
@@ -296,18 +276,17 @@
 (define repository-path (build-path ".scratch" "handoff"))
 (define start-file "start.toml")
 
-;; Whether `path` is the top level of a Git repository or worktree, rather
-;; than a directory inside one.
+;; TODO: Can this be simplified in any way?
 (: git-repository? (-> Path-String Boolean))
 (define (git-repository? path)
   (and (directory-exists? path)
        (let ([output (git* path "rev-parse" "--show-toplevel")])
          (and output
-              (equal? (path->directory-path (normalize-path (string-trim output "\n" #:left? #f)))
+              (equal? (path->directory-path
+                       (normalize-path (string-trim output "\n" #:left? #f)))
                       (path->directory-path (normalize-path path)))))))
 
-;; Like Git finds .git/, walk up from `start` to the nearest .scratch/handoff/
-;; repository.
+;; TODO: Can this be simplified in any way?
 (: find-handoff-repository (-> Path-String Path))
 (define (find-handoff-repository start)
   (let loop ([directory (simple-form-path start)])
@@ -320,18 +299,22 @@
            (loop parent)
            (raise-handoff-error "no ~a/ at or above ~a" repository-path start))])))
 
-;; An arc is a top-level directory containing a start file.
+;;; Arc helpers
+
 (: arc? (-> Path Boolean))
 (define (arc? path)
   (and (directory-exists? path) (file-exists? (build-path path start-file))))
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs repository)
-  (sort (for/list : (Listof String) ([name (in-list (directory-list repository))]
-                                     #:when (arc? (build-path repository name)))
-          (path->string name))
+  ;; TODO: Is sorting necessary here? The documentation says `directory-list`
+  ;; always sorts its outputs by `path<?`.
+  (sort (for/list : (Listof String) ([entry (in-list (directory-list repository))]
+                                     #:when (arc? (build-path repository entry)))
+          (path->string entry))
         string<?))
 
+;; TODO: The check can be consolodated into checking a single regex. Define the regex globally as `arc-name-regex` and inline the check against and raising the error.
 (: check-arc-name (-> String Void))
 (define (check-arc-name name)
   (when (or (member name '("" "." ".." ".git")) (regexp-match? #rx"/" name))
@@ -354,8 +337,8 @@
 
 ;;; Git
 
-;; Obtain Git's stdout, run in `directory`. Stdin is empty. Raises a handoff
-;; error that records Git's stderr when it exits non-zero.
+;; TODO: Any incidental complexity in any of these?
+
 (: git (-> Path-String String * String))
 (define (git directory . arguments)
   (define-values (succeeded? output error) (apply run-git directory arguments))
@@ -365,7 +348,6 @@
                          (if (string=? error "") "" (string-append ":\n" (string-trim error)))))
   output)
 
-;; Like `git`, but #f when Git exits non-zero. Stderr is discarded.
 (: git* (-> Path-String String * (U String #f)))
 (define (git* directory . arguments)
   (define-values (succeeded? output _error) (apply run-git directory arguments))
