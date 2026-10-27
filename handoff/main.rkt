@@ -9,20 +9,6 @@
          racket/system
          "error.rkt")
 
-(provide main
-         parse-arguments
-         (struct-out invocation)
-         (struct-out list-subcommand)
-         (struct-out start-subcommand)
-         (struct-out check-subcommand)
-         (struct-out lint-subcommand)
-         (struct-out update-subcommand)
-         (struct-out new-subcommand)
-         (struct-out workflow-list-subcommand)
-         (struct-out workflow-install-subcommand)
-         (struct-out workflow-fork-subcommand)
-         (struct-out guide-subcommand))
-
 (module+ main
   (exit (main (current-command-line-arguments))))
 
