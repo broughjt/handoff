@@ -257,29 +257,22 @@
 
 (define repository-path (build-path ".scratch" "handoff"))
 (define start-file "start.toml")
+(define arc-name-regex #px"^(?!(?:\\.|\\.\\.|\\.git)$)[^/]+$")
 
-;; TODO: Can this be simplified in any way?
 (: git-repository? (-> Path-String Boolean))
 (define (git-repository? path)
-  (and (directory-exists? path)
-       (let ([output (git* path "rev-parse" "--show-toplevel")])
-         (and output
-              (equal? (path->directory-path
-                       (normalize-path (string-trim output "\n" #:left? #f)))
-                      (path->directory-path (normalize-path path)))))))
+  (define dot-git (build-path path ".git"))
+  (or (directory-exists? dot-git) (file-exists? dot-git)))
 
-;; TODO: Can this be simplified in any way?
 (: find-handoff-repository (-> Path-String Path))
 (define (find-handoff-repository start)
   (let loop ([directory (simple-form-path start)])
     (define candidate (build-path directory repository-path))
+    (define-values (parent _name _directory?) (split-path directory))
     (cond
       [(git-repository? candidate) candidate]
-      [else
-       (define-values (parent _name _directory?) (split-path directory))
-       (if (path? parent)
-           (loop parent)
-           (raise-handoff-error "no ~a/ at or above ~a" repository-path start))])))
+      [(path? parent) (loop parent)]
+      [else (raise-handoff-error "no ~a/ at or above ~a" repository-path start)])))
 
 ;;; Arc helpers
 
@@ -289,24 +282,17 @@
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs repository)
-  ;; TODO: Is sorting necessary here? The documentation says `directory-list`
-  ;; always sorts its outputs by `path<?`.
-  (sort (for/list : (Listof String) ([entry (in-list (directory-list repository))]
-                                     #:when (arc? (build-path repository entry)))
-          (path->string entry))
-        string<?))
-
-;; TODO: The check can be consolodated into checking a single regex. Define the regex globally as `arc-name-regex` and inline the check against and raising the error.
-(: check-arc-name (-> String Void))
-(define (check-arc-name name)
-  (when (or (member name '("" "." ".." ".git")) (regexp-match? #rx"/" name))
-    (raise-handoff-error "specify a top-level arc directory name")))
+  ;; `directory-list` sorts by `path<?`.
+  (for/list : (Listof String) ([entry (in-list (directory-list repository))]
+                               #:when (arc? (build-path repository entry)))
+    (path->string entry)))
 
 (: select-arc (-> Path (U String #f) String))
 (define (select-arc repository name)
   (cond
     [name
-     (check-arc-name name)
+     (unless (regexp-match? arc-name-regex name)
+       (raise-handoff-error "specify a top-level arc directory name"))
      (unless (directory-exists? (build-path repository name))
        (raise-handoff-error "~a is not a directory in ~a" name repository))
      name]
