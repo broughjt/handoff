@@ -252,44 +252,21 @@
 
 (: handle-list (-> Path Boolean Status))
 (define (handle-list repository archived?)
-  (for ([name (in-list ((if archived? list-archived-arcs list-arcs) repository))])
-    (displayln name))
-  'success)
+  (error 'handle-list "unimplemented"))
 
 (: handle-check (-> Path String Status))
 (define (handle-check repository arc)
-  (define checks-path (build-path repository arc checks-file))
-  (define checks
-    (with-handlers ([exn:fail:handoff?
-                     (λ ([error : exn])
-                       (raise-handoff-error "~a: ~a" checks-path (exn-message error)))])
-      (parse-checks (read-toml checks-path))))
-  (define run (run-and-report checks (find-project-repository repository)))
-  (if (andmap (λ ([result : check-result]) (eq? (check-result-outcome result) 'true))
-              (check-run-results run))
-      'success 'failure))
+  (error 'handle-check "unimplemented"))
 
 (: handle-lint (-> Path String Status))
 (define (handle-lint repository arc)
-  (define diagnostics (lint (read-arc (build-path repository arc) repository)))
-  (for ([diagnostic (in-list diagnostics)])
-    (displayln (diagnostic->string diagnostic)))
-  (printf "~a: ~a lint errors\n" arc (length diagnostics))
-  (if (empty? diagnostics) 'success 'failure))
+  (error 'handle-lint "unimplemented"))
 
 ;; Brief an agent to start work on a handoff arc (see `render-start`). Reads
 ;; and runs everything first, then prints the brief, and writes nothing.
 (: handle-start (-> Path String Status))
 (define (handle-start repository* name)
-  (define repository (normalize-path repository*))
-  (define arc* (read-arc (build-path repository name) repository))
-  (define status (read-project-status (arc-project arc*) (arc-baseline arc*)))
-  ;; Without --no-optional-locks, status may refresh and rewrite the index.
-  (define dirty (string-split (git repository "--no-optional-locks" "status" "--porcelain") "\n"))
-  (define checks (arc-checks arc*))
-  (define run (and (list? checks) (run-checks checks (arc-project arc*))))
-  (write-string (render-start arc* status dirty run))
-  'success)
+  (error 'handle-start "unimplemented"))
 
 ;; The project's branch and head, and what happened since those recorded in
 ;; the baseline's results.
@@ -329,87 +306,25 @@
 ;; pending. Rerunning replaces results.toml but leaves entry.md alone.
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin repository name)
-  (define arc* (read-arc (build-path repository name) repository))
-  (refuse (lint-refusal arc*))
-  ;; Lint has accepted checks.toml.
-  (define run (run-and-report (assert (arc-checks arc*) list?) (arc-project arc*)))
-
-  (define number (next-entry-number (arc-log arc*)))
-  (define entry-path (log-entry-path (arc-directory arc*) number))
-  (unless (directory-exists? entry-path)
-    (make-directory* (build-path (arc-directory arc*) log-directory))
-    ;; Fails rather than reusing an entry that appeared since we read the log.
-    (make-directory entry-path))
-  (define results-path (build-path entry-path results-file))
-  (define temporary (path-add-extension results-path #".tmp"))
-  (display-to-file (check-run->toml run) temporary #:exists 'truncate/replace)
-  (rename-file-or-directory temporary results-path #t)
-
-  (printf "\nlog/~a results recorded. Write the entry to ~a, then run handoff update --commit ~a\n"
-          number (build-path entry-path entry-file) name)
-  'success)
+  (error 'handle-update-begin "unimplemented"))
 
 ;; Commit the pending log entry with the arc's changes and anything already
 ;; staged in the handoff repository, unless `commit-refusal` refuses.
 (: handle-update-commit (-> Path String Status))
 (define (handle-update-commit repository name)
-  (define arc* (read-arc (build-path repository name) repository))
-  (refuse (commit-refusal arc* (project-branch-head (arc-project arc*))))
-  (define entry (assert (arc-pending-entry arc*)))
-  (define number (log-entry-number entry))
-  (define subject (format "~a: ~a" name (entry-headline (assert (log-entry-entry entry)))))
-
-  ;; Fails on an unmerged index, which could not be committed anyway.
-  (define index (string-trim (git repository "write-tree")))
-  (with-handlers ([exn:fail?
-                   (λ ([error : exn])
-                     (git* repository "read-tree" index)
-                     (raise error))])
-    (git repository "add" "--" name)
-    (git repository "commit" "--quiet" "--message" subject))
-
-  (printf "log/~a committed as ~a ~a\n"
-          number (substring (string-trim (git repository "rev-parse" "HEAD")) 0 7) subject)
-  ;; Git's short status lines for what the commit left out.
-  (define dirty (string-split (git repository "status" "--porcelain") "\n"))
-  (unless (empty? dirty)
-    (printf "not committed:\n")
-    (for ([line (in-list dirty)])
-      (printf "  ~a\n" line)))
-  'success)
+  (error 'handle-update-commit "unimplemented"))
 
 ;; Print each pattern as a record of labeled fields: its name, the file that
 ;; provides it, the files it shadows, and its summary.
 (: handle-workflow-list (-> Status))
 (define (handle-workflow-list)
-  (define patterns (find-patterns))
-  (when (empty? patterns)
-    (printf "no reusable workflows in ~a\n" (string-join (map path->string (pattern-directories)) ", ")))
-  (for ([pattern (in-list patterns)] [index (in-naturals)])
-    (unless (zero? index) (newline))
-    (printf "name: ~a\n" (pattern-name pattern))
-    (printf "path: ~a\n" (pattern-path pattern))
-    (for ([shadowed (in-list (pattern-shadowed pattern))])
-      (printf "shadows: ~a\n" shadowed))
-    (printf "summary: ~a\n" (document-summary (file->string (pattern-path pattern)))))
-  'success)
+  (error 'handle-workflow-list "unimplemented"))
 
 ;; Print the path of the first HANDOFF.md installed under $XDG_DATA_DIRS, for
 ;; the agent to read with its own tools.
 (: handle-guide (-> Status))
 (define (handle-guide)
-  (define directories (data-directories))
-  (define found
-    (findf file-exists?
-           (for/list : (Listof Path) ([base (in-list directories)])
-             (build-path base "handoff" "HANDOFF.md"))))
-  (unless found
-    (raise-handoff-error "no handoff/HANDOFF.md in ~a"
-                         (if (empty? directories)
-                             "$XDG_DATA_DIRS, which has no absolute directories"
-                             (string-join (map path->string directories) ", "))))
-  (displayln (path->string found))
-  'success)
+  (error 'handle-guide "unimplemented"))
 
 ;; Stubs out a new handoff arc. Creates each of the expected files with minimal
 ;; content and without committing them. Takes an optional name or reference to a
@@ -418,71 +333,18 @@
 ;; replaced (and the workflow pattern is written if one was not passed).
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new repository arc workflow)
-  (check-arc-name arc)
-  (define arc-path (build-path repository arc))
-  (when (or (file-exists? arc-path) (directory-exists? arc-path) (link-exists? arc-path))
-    (raise-handoff-error "~a already exists in ~a" arc repository))
-  ;; Everything is validated before anything is written.
-  (define-values (source _source-path)
-    (if workflow (find-workflow repository arc-path workflow) (values #f #f)))
-  (define found (and (pattern? source) source))
-  (define reference
-    (if (pattern? source)
-        (scope-path 'handoff (string->path (workflow-copy-name (pattern-name source))))
-        source))
-  (define copied (and found (install-pattern repository found)))
-  (make-directory arc-path)
-  (for ([file+contents (in-list (new-arc-files arc reference))])
-    (display-to-file (cdr file+contents) (build-path arc-path (car file+contents)) #:exists 'error))
-
-  (printf "created ~a/ with ~a\n" arc (string-join (map (inst car String String) (new-arc-files arc reference)) ", "))
-  (when reference
-    (printf "workflow: ~a~a\n" (scope-path->string reference)
-            (cond [copied (format " (copied from ~a)" copied)]
-                  [found " (existing)"]
-                  [else ""])))
-  (define diagnostics (lint (read-arc arc-path repository)))
-  (printf "lint, until the arc is written:\n")
-  (for ([diagnostic (in-list diagnostics)])
-    (printf "  ~a\n" (diagnostic->string diagnostic)))
-  'success)
+  (error 'handle-new "unimplemented"))
 
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install repository name)
-  (define found (find-pattern name))
-  (define copied (install-pattern repository found))
-  (define reference (string-append "handoff:" (workflow-copy-name name)))
-  (if copied
-      (printf "installed ~a, copied from ~a\n" reference copied)
-      (printf "~a already exists and was not modified\n" reference))
-  'success)
+  (error 'handle-workflow-install "unimplemented"))
 
 ;; Copy a pattern or an existing workflow file into the arc under a new name,
 ;; for the agent to amend, recording where it was forked from and that file's
 ;; hash. Leaves start.toml for the agent to point at the fork.
 (: handle-workflow-fork (-> Path String String String Status))
 (define (handle-workflow-fork repository arc name workflow)
-  (unless (pattern-name? name)
-    (raise-handoff-error "~a: a workflow name is lowercase letters, digits and hyphens" name))
-  (define arc-path (build-path repository arc))
-  (define-values (source source-path) (find-workflow repository arc-path workflow))
-  (define description
-    (if (pattern? source)
-        (format "workflow ~a" (pattern-name source))
-        (scope-path->string source)))
-  (define file (workflow-copy-name name))
-  (define path (build-path arc-path file))
-  (when (or (file-exists? path) (directory-exists? path) (link-exists? path))
-    (raise-handoff-error "~a already exists" path))
-  (define text (file->string source-path))
-  (display-to-file (string-append (workflow-provenance 'forked description text
-                                                       (date->string (current-seconds)))
-                                  (strip-provenance text))
-                   path
-                   #:exists 'error)
-  (printf "forked arc:~a from ~a\nto use it, set workflow in ~a to \"arc:~a\"\n"
-          file description start-file file)
-  'success)
+  (error 'handle-workflow-fork "unimplemented"))
 
 (: refuse (-> (U String #f) Void))
 (define (refuse refusal)
