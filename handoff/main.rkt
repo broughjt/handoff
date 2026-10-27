@@ -4,6 +4,7 @@
 (require racket/cmdline
          racket/file
          racket/list
+         racket/match
          racket/path
          racket/port
          racket/string
@@ -50,7 +51,38 @@
                     (λ ([error : exn]) : Status
                       (eprintf "~a\n" (exn-message error))
                       'usage)])
-     (execute (parse-arguments argv)))))
+     (match (parse-arguments argv)
+       ;; Most commands execute from with the current working directory set to
+       ;; the project repository, but there are few for which this doesn't make
+       ;; sense.
+       [(invocation _ (workflow-list-subcommand)) (handle-workflow-list)]
+       [(invocation _ (guide-subcommand)) (handle-guide)]
+       [(invocation option subcommand)
+        (when (and option (not (git-repository? option)))
+          (raise-handoff-error "~a is not a git repository" option))
+        (define repository (or option
+                               (find-handoff-repository (current-directory))))
+        (match subcommand
+          [(list-subcommand archived?) (handle-list repository archived?)]
+          [(start-subcommand arc)
+           (handle-start repository (select-arc repository arc))]
+          [(check-subcommand arc)
+           (handle-check repository (select-arc repository arc))]
+          [(lint-subcommand arc)
+           (handle-lint repository (select-arc repository arc))]
+          [(update-subcommand 'begin arc)
+           (handle-update-begin repository (select-arc repository arc))]
+          [(update-subcommand 'commit arc)
+           (handle-update-commit repository (select-arc repository arc))]
+          [(new-subcommand arc workflow)
+           (handle-new repository arc workflow)]
+          [(workflow-install-subcommand name)
+           (handle-workflow-install repository name)]
+          [(workflow-fork-subcommand arc name source)
+           (handle-workflow-fork repository
+                                 (select-arc repository arc)
+                                 name
+                                 source)])]))))
 
 (define-type Status (U 'success 'failure 'usage))
 (define-type Exit-Code (U 0 1 2))
@@ -203,50 +235,6 @@
                    #:args (arc name source)
                    (workflow-fork-subcommand (assert arc string?) (assert name string?) (assert source string?)))]
     [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
-
-;; TODO: inline into main
-(: execute (-> invocation Status))
-(define (execute invocation)
-  (define subcommand (invocation-subcommand invocation))
-  ;; Commands reading only user-scope or installed files should not execute
-  ;; from the project repository.
-  (cond
-    [(workflow-list-subcommand? subcommand) (handle-workflow-list)]
-    [(guide-subcommand? subcommand) (handle-guide)]
-    [else (execute-in-repository invocation)]))
-
-;; TODO: inline into main
-(: execute-in-repository (-> invocation Status))
-(define (execute-in-repository invocation)
-  (define option (invocation-repository invocation))
-  (when (and option (not (git-repository? option)))
-    (raise-handoff-error "~a is not a git repository" option))
-  (define repository (or option (find-handoff-repository (current-directory))))
-  (define subcommand (invocation-subcommand invocation))
-  (cond
-    [(list-subcommand? subcommand)
-     (handle-list repository (list-subcommand-archived? subcommand))]
-    [(start-subcommand? subcommand)
-     (handle-start repository (select-arc repository (start-subcommand-arc subcommand)))]
-    [(check-subcommand? subcommand)
-     (handle-check repository (select-arc repository (check-subcommand-arc subcommand)))]
-    [(lint-subcommand? subcommand)
-     (handle-lint repository (select-arc repository (lint-subcommand-arc subcommand)))]
-    [(update-subcommand? subcommand)
-     (define arc (select-arc repository (update-subcommand-arc subcommand)))
-     (case (update-subcommand-step subcommand)
-       [(begin) (handle-update-begin repository arc)]
-       [(commit) (handle-update-commit repository arc)])]
-    [(new-subcommand? subcommand)
-     (handle-new repository (new-subcommand-arc subcommand) (new-subcommand-workflow subcommand))]
-    [(workflow-install-subcommand? subcommand)
-     (handle-workflow-install repository (workflow-install-subcommand-pattern subcommand))]
-    [(workflow-fork-subcommand? subcommand)
-     (handle-workflow-fork repository
-                           (select-arc repository (workflow-fork-subcommand-arc subcommand))
-                           (workflow-fork-subcommand-name subcommand)
-                           (workflow-fork-subcommand-source subcommand))]
-    [else (error 'execute "unhandled subcommand ~a" subcommand)]))
 
 ;;; Commands
 
