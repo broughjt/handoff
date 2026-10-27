@@ -2,26 +2,12 @@
 ;; Automation for the handoff skills.
 
 (require racket/cmdline
-         racket/file
          racket/list
          racket/match
          racket/path
-         racket/port
          racket/string
          racket/system
-         typed/racket/os
-         "error.rkt"
-         "model.rkt"
-         "toml.rkt")
-(require/typed racket/base
-  ;; Typed Racket has no type for this.
-  [current-inexact-monotonic-milliseconds (-> Flonum)]
-  ;; Typed Racket's type for subprocess has no 'stdout for stderr.
-  [(subprocess subprocess/merged)
-   (-> False False 'stdout Path-String String *
-       (Values Subprocess Input-Port Output-Port False))]
-  ;; Typed Racket has no type for this either.
-  [path<? (-> Path Path Boolean)])
+         "error.rkt")
 
 (provide main
          parse-arguments
@@ -256,35 +242,6 @@
 (define (handle-start repository* name)
   (error 'handle-start "unimplemented"))
 
-;; The project's branch and head, and what happened since those recorded in
-;; the baseline's results.
-(: read-project-status (-> Path (U log-entry #f) project-status))
-(define (read-project-status project baseline)
-  (define now (project-branch-head project))
-  (define earlier (and baseline (log-entry-results baseline)))
-  (project-status
-   project
-   now
-   (and baseline
-        (check-run? earlier)
-        (let* ([recorded (check-run-project-head earlier)]
-               [old (branch-head-head recorded)]
-               [new (branch-head-head now)])
-          (define (commits [log-format : String] . [arguments : String *])
-            (string-split (apply git project "log" "--abbrev=12" (string-append "--format=" log-format) arguments)
-                          "\n"))
-          (project-change
-           (log-entry-number baseline)
-           recorded
-           (cond
-             [(equal? old new) 'unchanged]
-             [(not new) 'no-head]
-             [(not old) (cons 'all (commits "%h %s" new))]
-             [(not (git* project "cat-file" "-e" (string-append old "^{commit}"))) 'unresolvable]
-             [(git* project "merge-base" "--is-ancestor" old new)
-              (cons 'since (commits "%h %s" (format "~a..~a" old new)))]
-             [else (cons 'rewritten (commits "%m %h %s" "--left-right" (format "~a...~a" old new)))]))))))
-
 ;; Recording a log entry happens in two command-line steps: `update --begin`
 ;; records check results in a results.toml file for the pending log entry, the
 ;; agent writes entry.md, and then `update --commit` commits them.
@@ -334,186 +291,10 @@
 (define (handle-workflow-fork repository arc name workflow)
   (error 'handle-workflow-fork "unimplemented"))
 
-(: refuse (-> (U String #f) Void))
-(define (refuse refusal)
-  (when refusal
-    (raise-handoff-error "~a" refusal)))
-
-;; Run the checks, printing each check's result as soon as it and every check
-;; before it in file order have finished, so that the output does not depend
-;; on timing. Note each result's change since `baseline` when that has
-;; results, then summarize the run.
-(: run-and-report (->* ((Listof check) Path) (#:baseline (U log-entry #f)) check-run))
-(define (run-and-report checks project #:baseline [baseline #f])
-  (write-string (render-run-start checks))
-  (flush-output)
-  (define run
-    (run-checks checks project
-                #:on-result (λ ([result : check-result])
-                              (newline)
-                              (write-string (render-compared-result result baseline))
-                              (flush-output))))
-  (write-string (render-run-end run baseline))
-  run)
-
-;;; Reading an arc
-
-;; Read everything about the arc at `directory` that lint, start and update
-;; decide from. A file that does not parse is kept as a failure.
-(: read-arc (-> Path Path arc))
-(define (read-arc directory repository)
-  (define project (find-project-repository repository))
-  (define-values (_base name _directory?) (split-path directory))
-  (define start* (read-part (λ () (parse-start (read-toml (build-path directory start-file))))))
-  (define references
-    (if (start? start*)
-        (for/list : (Listof reference) ([scope-path (in-list (cons (start-workflow start*)
-                                                                   (map read-first-path (start-read-first start*))))])
-          (define path (resolve-scope-path scope-path #:arc directory #:repository repository #:project project))
-          (reference scope-path path (file-exists? path)))
-        null))
-  (define workflow (and (pair? references) (first references)))
-  (arc (path->string (assert name path?))
-       directory
-       repository
-       project
-       start*
-       references
-       (and workflow (reference-exists? workflow) (file->string (reference-path workflow)))
-       (for/list : (Listof (Pairof String (U String #f))) ([name (in-list state-files)])
-         (define path (build-path directory name))
-         (cons name (and (file-exists? path) (file->string path))))
-       (read-part (λ () (parse-checks (read-toml (build-path directory checks-file)))))
-       (read-documents directory repository)
-       (read-log directory)))
-
-(: read-part (All (A) (-> (-> A) (Read A))))
-(define (read-part read)
-  (with-handlers ([exn:fail:handoff? (λ ([error : exn]) (failure (exn-message error)))])
-    (read)))
-
-;; The documents an agent may open beyond the ones start inlines: the arc's
-;; files and directories beside its layout, then the Markdown files at the
-;; handoff repository's root other than verbatim workflow copies, which are
-;; the shared topic documents.
-(: read-documents (-> Path Path (Listof document)))
-(define (read-documents directory repository)
-  (define layout (map string->path (list* start-file checks-file log-directory state-files)))
-  (define (names [directory : Path]) (sort (directory-list directory) path<?))
-  (define (markdown [path : Path])
-    (and (file-exists? path) (path-has-extension? path #".md") (file->string path)))
-  (append
-   (for/list : (Listof document) ([name (in-list (names directory))]
-                                  #:unless (member name layout))
-     (define path (build-path directory name))
-     (document (format "arc:~a" (if (directory-exists? path) (path->directory-path name) name))
-               path
-               (markdown path)))
-   (for*/list : (Listof document) ([name (in-list (names repository))]
-                                   [path (in-value (build-path repository name))]
-                                   [text (in-value (markdown path))]
-                                   #:when text
-                                   #:unless (verbatim-copy? text))
-     (document (format "handoff:~a" name) path text))))
-
-(: read-log (-> Path entry-log))
-(define (read-log directory)
-  (define log (build-path directory log-directory))
-  (define-values (numbers invalid) (list-log-entries directory))
-  (entry-log
-   (cond
-     [(directory-exists? log) 'directory]
-     [(or (file-exists? log) (link-exists? log)) 'not-a-directory]
-     [else 'absent])
-   (for/list : (Listof log-entry) ([number (in-list numbers)])
-     (define path (log-entry-path directory number))
-     (define entry-path (build-path path entry-file))
-     (define results-path (build-path path results-file))
-     (log-entry number
-                (directory-exists? path)
-                (and (file-exists? entry-path) (file->string entry-path))
-                (and (file-exists? results-path)
-                     (read-part (λ () (parse-check-run (read-toml results-path)))))))
-   invalid
-   (pending-log-entry directory)))
-
-;;; Running checks
-
-;; The most output kept per check, in bytes. Past it, the start of the output
-;; is dropped: a failure is usually explained at the end.
-(define capture-limit : Exact-Positive-Integer (* 1024 1024))
-
-(: run-checks (->* ((Listof check) Path) (#:on-result (-> check-result Void)) check-run))
-(define (run-checks checks project #:on-result [on-result void])
-  (define wall-clock (current-seconds))
-  (define started (current-inexact-monotonic-milliseconds))
-  ;; Every check starts at once, each in its own thread. Checks run in the
-  ;; project root, so that a relative path in a check means the same thing
-  ;; wherever handoff was run from.
-  (define waits
-    (parameterize ([current-directory project])
-      (for/list : (Listof (-> check-result)) ([check (in-list checks)])
-        (define outcome : (Boxof (U check-result exn:fail #f)) (box #f))
-        (define worker
-          (thread (λ ()
-                    (set-box! outcome (with-handlers ([exn:fail? (λ ([error : exn:fail]) error)])
-                                        (run-check check))))))
-        (λ ()
-          (thread-wait worker)
-          (define result (unbox outcome))
-          (if (check-result? result) result (raise result))))))
-  ;; Results are passed on in file order, each once it and those before it
-  ;; have finished.
-  (define results
-    (for/list : (Listof check-result) ([wait (in-list waits)])
-      (define result (wait))
-      (on-result result)
-      result))
-  (check-run (gethostname) wall-clock (seconds-since started) (project-branch-head project) results))
-
-(: run-check (-> check check-result))
-(define (run-check check)
-  (define started (current-inexact-monotonic-milliseconds))
-  (define-values (process stdout stdin _stderr)
-    ;; Use a new process group, so that a timeout kills the shell's children
-    ;; too. `system*` can neither do that nor time out, so we use `subprocess`.
-    (parameterize ([subprocess-group-enabled #t])
-      (subprocess/merged #f #f 'stdout
-                         (or (find-executable-path "bash")
-                             (raise-handoff-error "bash not found on PATH"))
-                         "-c" (check-command check))))
-  (close-output-port stdin)
-  ;; Output is held whole until the check ends, so a check that floods it until
-  ;; its timeout holds all of it in memory.
-  (define buffer (open-output-bytes))
-  (define reader (thread (λ () (copy-port stdout buffer))))
-  ;; Finished means the output reached EOF and the shell exited, both within
-  ;; the timeout. A background child holding stdout open counts against it.
-  (define (remaining) (max 0 (- (check-timeout check) (seconds-since started))))
-  (define finished?
-    (and (sync/timeout (remaining) (thread-dead-evt reader))
-         (sync/timeout (remaining) process)
-         #t))
-  (unless finished?
-    (subprocess-kill process #t)
-    (kill-thread reader))
-  (close-input-port stdout)
-  (subprocess-wait process)
-  (define captured (get-output-bytes buffer))
-  (define excess (max 0 (- (bytes-length captured) capture-limit)))
-  (define output (bytes->string/utf-8 (subbytes captured excess) (integer->char #xFFFD)))
-  (define duration (seconds-since started))
-  (cond
-    [finished?
-     (define code (assert (subprocess-status process) exact-integer?))
-     (check-result check (case code [(0) 'true] [(1) 'false] [else 'unknown]) duration output excess code)]
-    [else (check-result check 'timeout duration output excess #f)]))
-
-(: seconds-since (-> Flonum Nonnegative-Real))
-(define (seconds-since started)
-  (max 0 (/ (- (current-inexact-monotonic-milliseconds) started) 1000)))
-
 ;;; Repositories
+
+(define repository-path (build-path ".scratch" "handoff"))
+(define start-file "start.toml")
 
 ;; Whether `path` is the top level of a Git repository or worktree, rather
 ;; than a directory inside one.
@@ -539,112 +320,6 @@
            (loop parent)
            (raise-handoff-error "no ~a/ at or above ~a" repository-path start))])))
 
-;; The project repository enclosing the handoff repository.
-(: find-project-repository (-> Path Path))
-(define (find-project-repository repository)
-  (define output
-    (or (git* (build-path (normalize-path repository) 'up) "rev-parse" "--show-toplevel")
-        (raise-handoff-error "no project repository contains ~a" repository)))
-  (string->path (string-trim output "\n" #:left? #f)))
-
-(: project-branch-head (-> Path branch-head))
-(define (project-branch-head project)
-  (define (line [output : (U String #f)])
-    (and output (string-trim output "\n" #:left? #f)))
-  (branch-head (line (git* project "symbolic-ref" "--quiet" "--short" "HEAD"))
-               (line (git* project "rev-parse" "--verify" "--quiet" "HEAD"))))
-
-;;; Installed files
-
-;; The XDG Base Directory specification ignores relative paths.
-(: absolute-directory (-> (U String #f) (U Path #f)))
-(define (absolute-directory text)
-  (and text (non-empty-string? text) (absolute-path? text) (string->path text)))
-
-;; The directories of $XDG_DATA_DIRS, in order of preference.
-(: data-directories (-> (Listof Path)))
-(define (data-directories)
-  (filter-map absolute-directory
-              (string-split
-               (let ([value (getenv "XDG_DATA_DIRS")])
-                 (if (and value (non-empty-string? value))
-                     value
-                     "/usr/local/share:/usr/share"))
-               ":")))
-
-;;; Workflow patterns
-
-(: pattern-directories (-> (Listof Path)))
-(define (pattern-directories)
-  (define config
-    (or (absolute-directory (getenv "XDG_CONFIG_HOME"))
-        (build-path (find-system-path 'home-dir) ".config")))
-  (for/list ([base (in-list (cons config (data-directories)))])
-    (build-path base "handoff" "workflows")))
-
-(: find-patterns (-> (Listof pattern)))
-(define (find-patterns)
-  (define found : (HashTable String pattern) (make-hash))
-  (define order : (Listof String) null)
-  (for* ([directory (in-list (pattern-directories))]
-         #:when (directory-exists? directory)
-         [file (in-list (map path->string (directory-list directory)))])
-    (define name (regexp-match #px"^(.*)\\.md$" file))
-    (define path (build-path directory file))
-    (when (and name (pattern-name? (assert (second name))) (file-exists? path))
-      (define key (assert (second name)))
-      (define earlier (hash-ref found key #f))
-      (cond
-        ;; Two data directories can hold the same file, as when one is a
-        ;; profile linking to the package that another names directly.
-        [(and earlier (equal? (normalize-path path) (normalize-path (pattern-path earlier))))
-         (void)]
-        [earlier
-         (hash-set! found key (struct-copy pattern earlier
-                                           [shadowed (append (pattern-shadowed earlier) (list path))]))]
-        [else
-         (hash-set! found key (pattern key path null))
-         (set! order (cons key order))])))
-  (for/list ([key (in-list (sort order string<?))])
-    (hash-ref found key)))
-
-;; A workflow named on the command line: a pattern name, or a reference to an
-;; existing file, `arc:` resolving against `arc`. Also the file's path.
-(: find-workflow (-> Path Path String (Values (U pattern scope-path) Path)))
-(define (find-workflow repository arc workflow)
-  (cond
-    [(regexp-match? #rx":" workflow)
-     (define reference (parse-scope-path workflow))
-     (define path (resolve-scope-path reference #:arc arc #:repository repository
-                                      #:project (find-project-repository repository)))
-     (unless (file-exists? path)
-       (raise-handoff-error "~a: expected a regular file at ~a" workflow path))
-     (values reference path)]
-    [else
-     (define found (find-pattern workflow))
-     (values found (pattern-path found))]))
-
-(: find-pattern (-> String pattern))
-(define (find-pattern name)
-  (or (findf (λ ([candidate : pattern]) (equal? (pattern-name candidate) name)) (find-patterns))
-      (raise-handoff-error "no reusable workflow named ~a; see handoff workflow list" name)))
-
-(: install-pattern (-> Path pattern (U Path #f)))
-(define (install-pattern repository pattern)
-  (define path (build-path repository (workflow-copy-name (pattern-name pattern))))
-  (cond
-    [(or (file-exists? path) (link-exists? path)) #f]
-    [else
-     (define text (file->string (pattern-path pattern)))
-     (display-to-file (string-append (workflow-provenance 'copied
-                                                          (format "workflow ~a" (pattern-name pattern))
-                                                          text
-                                                          (date->string (current-seconds)))
-                                     text)
-                      path
-                      #:exists 'error)
-     (pattern-path pattern)]))
-
 ;; An arc is a top-level directory containing a start file.
 (: arc? (-> Path Boolean))
 (define (arc? path)
@@ -655,13 +330,6 @@
   (sort (for/list : (Listof String) ([name (in-list (directory-list repository))]
                                      #:when (arc? (build-path repository name)))
           (path->string name))
-        string<?))
-
-(: list-archived-arcs (-> Path (Listof String)))
-(define (list-archived-arcs repository)
-  (define output (git repository "tag" "--list" (string-append archive-tag-prefix "*")))
-  (sort (for/list : (Listof String) ([tag (in-list (string-split output))])
-          (string-trim tag archive-tag-prefix #:right? #f))
         string<?))
 
 (: check-arc-name (-> String Void))
@@ -683,29 +351,6 @@
        [(empty? arcs) (raise-handoff-error "there are no active arcs")]
        [(empty? (rest arcs)) (first arcs)]
        [else (raise-handoff-error "specify the arc; active arcs: ~a" (string-join arcs ", "))])]))
-
-;; Some entries in the log directory might not pass `parse-log-entry-name`, so
-;; partition into successfully parsed entries and entries which are invalid.
-(: list-log-entries (-> Path (Values (Listof Exact-Positive-Integer) (Listof String))))
-(define (list-log-entries arc)
-  (define log (build-path arc log-directory))
-  (define names (if (directory-exists? log) (map path->string (directory-list log)) null))
-  (define-values (numbered invalid) (partition parse-log-entry-name names))
-  (values (sort (map (λ ([name : String]) (assert (parse-log-entry-name name))) numbered) <)
-          (sort invalid string<?)))
-
-;; Get the number of the update in progress, which is the highest-numbered log
-;; entry not yet in the handoff repository's HEAD (#f if this does not exist).
-(: pending-log-entry (-> Path (U Exact-Positive-Integer #f)))
-(define (pending-log-entry arc)
-  (define-values (numbers _invalid) (list-log-entries arc))
-  (and (pair? numbers)
-       (let* ([number (last numbers)]
-              [entry (log-entry-path arc number)])
-         (and (directory-exists? entry)
-              ;; `HEAD:./` specifies the tree at the current directory.
-              (not (git* entry "cat-file" "-e" "HEAD:./"))
-              number))))
 
 ;;; Git
 
