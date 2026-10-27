@@ -50,11 +50,11 @@
            (handle-new repository arc workflow)]
           [(workflow-install-subcommand name)
            (handle-workflow-install repository name)]
-          [(workflow-fork-subcommand arc name source)
+          [(workflow-fork-subcommand arc source name)
            (handle-workflow-fork repository
                                  (select-arc repository arc)
-                                 name
-                                 source)])]))))
+                                 source
+                                 name)])]))))
 
 (define-type Status (U 'success 'failure 'usage))
 (define-type Exit-Code (U 0 1 2))
@@ -85,11 +85,10 @@
 (struct new-subcommand ([arc : String]
                         [workflow : (U String #f)]) #:transparent)
 (struct workflow-list-subcommand () #:transparent)
-(struct workflow-install-subcommand ([pattern : String]) #:transparent)
+(struct workflow-install-subcommand ([name : String]) #:transparent)
 (struct workflow-fork-subcommand ([arc : String]
-                                  ;; TODO: `name` or something else?
-                                  [name : String]
-                                  [source : String]) #:transparent)
+                                  [source : String]
+                                  [name : (U String #f)]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
 (struct update-subcommand ([step : (U 'begin 'commit)]
                            [arc : (U String #f)]) #:transparent)
@@ -166,8 +165,7 @@
       #:program program
       #:argv arguments
       #:help-labels
-      ;; TODO: name or something else?
-      "<workflow> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
+      "<workflow> is a name from handoff workflow list"
       #:args (arc [workflow #f])
       (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
     [("workflow")
@@ -183,33 +181,31 @@
       ;; copy a workflow to the root of the handoff repository so it can be modified
       "  list                 list the reusable workflows"
       "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
-      "  fork <arc> <name> <source>  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
+      "  fork <arc> <source> [<name>]  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
       #:args (verb . verb-arguments)
-      (parse-workflow-subcommand (assert verb string?)
-                                 (map (λ (a) (assert a string?)) verb-arguments)))]
+      (let* ([verb (assert verb string?)]
+             [arguments (map (λ (a) (assert a string?)) verb-arguments)]
+             [program (string-append program " " verb)])
+        (case verb
+          [("list")
+           (command-line #:program program #:argv arguments #:args ()
+                         (workflow-list-subcommand))]
+          [("install")
+           (command-line #:program program #:argv arguments #:args (name)
+                         (workflow-install-subcommand (assert name string?)))]
+          [("fork")
+           (command-line #:program program #:argv arguments
+                         #:help-labels
+                         "<source> is either a workflow name or a reference like handoff:workflow-x.md"
+                         "<name> defaults to the source's name"
+                         #:args (arc source [name #f])
+                         (workflow-fork-subcommand (assert arc string?)
+                                                   (assert source string?)
+                                                   (and name (assert name string?))))]
+          [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)])))]
     [("guide") (command-line #:program program #:argv arguments #:args () (guide-subcommand))]
     [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
                                subcommand)]))
-
-;; TODO: inline
-(: parse-workflow-subcommand (-> String (Listof String) Subcommand))
-(define (parse-workflow-subcommand verb arguments)
-  (define program (string-append "handoff workflow " verb))
-  (case verb
-    [("list")
-     (command-line #:program program #:argv arguments #:args ()
-                   (workflow-list-subcommand))]
-    [("install")
-     (command-line #:program program #:argv arguments #:args (pattern)
-                   (workflow-install-subcommand (assert pattern string?)))]
-    [("fork")
-     (command-line #:program program #:argv arguments
-                   #:help-labels
-                   ;; TODO: Can this be more concise? Do we need to say both?
-                   "<source> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
-                   #:args (arc name source)
-                   (workflow-fork-subcommand (assert arc string?) (assert name string?) (assert source string?)))]
-    [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
 
 ;;; Commands
 
@@ -253,8 +249,8 @@
 (define (handle-workflow-install repository name)
   (error 'handle-workflow-install "unimplemented"))
 
-(: handle-workflow-fork (-> Path String String String Status))
-(define (handle-workflow-fork repository arc name workflow)
+(: handle-workflow-fork (-> Path String String (U String #f) Status))
+(define (handle-workflow-fork repository arc source name)
   (error 'handle-workflow-fork "unimplemented"))
 
 ;;; Repositories
