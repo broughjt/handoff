@@ -305,8 +305,6 @@
 
 ;;; Git
 
-;; TODO: Any incidental complexity in any of these?
-
 (: git (-> Path-String String * String))
 (define (git directory . arguments)
   (define-values (succeeded? output error) (apply run-git directory arguments))
@@ -332,4 +330,7 @@
                    [current-output-port output]
                    [current-error-port error])
       (apply system* program "-C" directory arguments)))
-  (values succeeded? (get-output-string output) (get-output-string error)))
+  (values succeeded?
+          (string-trim (get-output-string output) "\n" #:left? #f)
+          (get-output-string error)))
+
