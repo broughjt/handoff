@@ -65,18 +65,29 @@
 ;;; Command line
 
 (define-type Subcommand
-  (U list-subcommand start-subcommand check-subcommand lint-subcommand update-subcommand
-     new-subcommand workflow-list-subcommand workflow-install-subcommand workflow-fork-subcommand
+  (U list-subcommand
+     start-subcommand
+     check-subcommand
+     lint-subcommand
+     update-subcommand
+     new-subcommand
+     workflow-list-subcommand
+     workflow-install-subcommand
+     workflow-fork-subcommand
      guide-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
-(struct new-subcommand ([arc : String] [workflow : (U String #f)]) #:transparent)
-(struct workflow-list-subcommand () #:transparent)
-(struct workflow-install-subcommand ([pattern : String]) #:transparent)
-(struct workflow-fork-subcommand ([arc : String] [name : String] [source : String]) #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
+(struct new-subcommand ([arc : String]
+                        [workflow : (U String #f)]) #:transparent)
+(struct workflow-list-subcommand () #:transparent)
+(struct workflow-install-subcommand ([pattern : String]) #:transparent)
+(struct workflow-fork-subcommand ([arc : String]
+                                  [name : String]
+                                  [source : String]) #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
-(struct update-subcommand ([step : (U 'begin 'commit)] [arc : (U String #f)]) #:transparent)
+(struct update-subcommand ([step : (U 'begin 'commit)]
+                           [arc : (U String #f)]) #:transparent)
 (struct guide-subcommand () #:transparent)
 
 ;; "Envisioning the hereafter, listenin' to Steve Wonder"
@@ -159,6 +170,11 @@
       #:argv arguments
       #:usage-help
       "Commands:"
+      ;; TODO: What is a "reusable" workflow as opposed to a "workflow file"?
+      ;; TODO: Why not:
+      ;; list workflows
+      ;; copy a workflow verbatim to the root of the handoff repository
+      ;; copy a workflow to the root of the handoff repository so it can be modified
       "  list                 list the reusable workflows"
       "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
       "  fork <arc> <name> <source>  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
@@ -173,18 +189,22 @@
 (define (parse-workflow-subcommand verb arguments)
   (define program (string-append "handoff workflow " verb))
   (case verb
-    [("list") (command-line #:program program #:argv arguments #:args () (workflow-list-subcommand))]
+    [("list")
+     (command-line #:program program #:argv arguments #:args ()
+                   (workflow-list-subcommand))]
     [("install")
      (command-line #:program program #:argv arguments #:args (pattern)
                    (workflow-install-subcommand (assert pattern string?)))]
     [("fork")
      (command-line #:program program #:argv arguments
                    #:help-labels
+                   ;; TODO: Can this be more concise? Do we need to say both?
                    "<source> is a name from handoff workflow list, or a reference such as handoff:workflow-x.md"
                    #:args (arc name source)
                    (workflow-fork-subcommand (assert arc string?) (assert name string?) (assert source string?)))]
     [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)]))
 
+;; TODO: inline into main
 (: execute (-> invocation Status))
 (define (execute invocation)
   (define subcommand (invocation-subcommand invocation))
@@ -195,6 +215,7 @@
     [(guide-subcommand? subcommand) (handle-guide)]
     [else (execute-in-repository invocation)]))
 
+;; TODO: inline into main
 (: execute-in-repository (-> invocation Status))
 (define (execute-in-repository invocation)
   (define option (invocation-repository invocation))
