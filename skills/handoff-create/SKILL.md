@@ -60,7 +60,7 @@ If `.scratch/handoff/` does not exist, ask the user to create it. Do not run `gi
 Run `handoff new <arc> [<workflow>]`, passing the workflow chosen in the interview:
 
 - An existing workflow used as is: specify it, and `handoff new` will install a verbatim copy and set `workflow`.
-- A variation: run `handoff new <arc>`, then `handoff workflow fork <arc> <name> <source>`, amend the fork, and set `workflow` to the reference it prints.
+- A variation: run `handoff new <arc>`, then `handoff workflow fork <arc> <source> [<name>]`, amend the fork, and set `workflow` to the reference it prints.
 - A new workflow: run `handoff new <arc>`, write `arc:workflow-<name>.md` following *Writing a workflow* in HANDOFF.md, opening with `<!-- created for this arc on <date> -->`, and set `workflow` to it.
 
 Then fill in every file:
