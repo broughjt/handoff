@@ -83,19 +83,24 @@
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]) #:transparent)
 (struct new-subcommand ([arc : String]
-                        [workflow : (U String #f)]) #:transparent)
+                        [workflow : (U String #f)])
+  #:transparent)
 (struct workflow-list-subcommand () #:transparent)
 (struct workflow-install-subcommand ([name : String]) #:transparent)
 (struct workflow-fork-subcommand ([arc : String]
                                   [source : String]
-                                  [name : (U String #f)]) #:transparent)
+                                  [name : (U String #f)])
+  #:transparent)
 (struct lint-subcommand ([arc : (U String #f)]) #:transparent)
 (struct update-subcommand ([step : (U 'begin 'commit)]
-                           [arc : (U String #f)]) #:transparent)
+                           [arc : (U String #f)])
+  #:transparent)
 (struct guide-subcommand () #:transparent)
 
 ;; "Envisioning the hereafter, listenin' to Steve Wonder"
-(struct invocation ([repository : (U Path #f)] [subcommand : Subcommand]) #:transparent)
+(struct invocation ([repository : (U Path #f)]
+                    [subcommand : Subcommand])
+  #:transparent)
 
 (: parse-arguments (-> (Vectorof String) invocation))
 (define (parse-arguments argv)
@@ -199,9 +204,10 @@
                          "<source> is either a workflow name or a reference like handoff:workflow-x.md"
                          "<name> defaults to the source's name"
                          #:args (arc source [name #f])
-                         (workflow-fork-subcommand (assert arc string?)
-                                                   (assert source string?)
-                                                   (and name (assert name string?))))]
+                         (workflow-fork-subcommand
+                          (assert arc string?)
+                          (assert source string?)
+                          (and name (assert name string?))))]
           [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)])))]
     [("guide") (command-line #:program program #:argv arguments #:args () (guide-subcommand))]
     [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
@@ -211,7 +217,12 @@
 
 (: handle-list (-> Path Boolean Status))
 (define (handle-list repository archived?)
-  (error 'handle-list "unimplemented"))
+  (for ([arc-name (in-list ((if archived?
+                                list-archived-arcs
+                                list-arcs)
+                            repository))])
+    (displayln arc-name))
+  'success)
 
 (: handle-check (-> Path String Status))
 (define (handle-check repository arc)
@@ -272,9 +283,13 @@
     (cond
       [(git-repository? candidate) candidate]
       [(path? parent) (loop parent)]
-      [else (raise-handoff-error "no ~a/ at or above ~a" repository-path start)])))
+      [else (raise-handoff-error "no ~a/ at or above ~a"
+                                 repository-path
+                                 start)])))
 
 ;;; Arc helpers
+
+(define archive-tag-prefix "archive/")
 
 (: arc? (-> Path Boolean))
 (define (arc? path)
@@ -282,10 +297,20 @@
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs repository)
-  ;; `directory-list` sorts by `path<?`.
+  ;; Note: `directory-list` sorts by `path<?`.
   (for/list : (Listof String) ([entry (in-list (directory-list repository))]
                                #:when (arc? (build-path repository entry)))
     (path->string entry)))
+
+(: list-archived-arcs (-> Path (Listof String)))
+(define (list-archived-arcs repository)
+  (define output (git repository
+                      "tag"
+                      "--list"
+                      (string-append archive-tag-prefix "*")))
+  (sort (for/list : (Listof String) ([tag (in-list (string-split output))])
+          (string-trim tag archive-tag-prefix #:right? #f))
+        string<?))
 
 (: select-arc (-> Path (U String #f) String))
 (define (select-arc repository name)
@@ -301,7 +326,8 @@
      (cond
        [(empty? arcs) (raise-handoff-error "there are no active arcs")]
        [(empty? (rest arcs)) (first arcs)]
-       [else (raise-handoff-error "specify the arc; active arcs: ~a" (string-join arcs ", "))])]))
+       [else (raise-handoff-error "specify the arc; active arcs: ~a"
+                                  (string-join arcs ", "))])]))
 
 ;;; Git
 
@@ -311,7 +337,9 @@
   (unless succeeded?
     (raise-handoff-error "git ~a failed in ~a~a"
                          (string-join arguments) directory
-                         (if (string=? error "") "" (string-append ":\n" (string-trim error)))))
+                         (if (string=? error "")
+                             ""
+                             (string-append ":\n" (string-trim error)))))
   output)
 
 (: git* (-> Path-String String * (U String #f)))
@@ -322,7 +350,8 @@
 (: run-git (-> Path-String String * (Values Boolean String String)))
 (define (run-git directory . arguments)
   (define program
-    (or (find-executable-path "git") (raise-handoff-error "git not found on PATH")))
+    (or (find-executable-path "git")
+        (raise-handoff-error "git not found on PATH")))
   (define output (open-output-string))
   (define error (open-output-string))
   (define succeeded?
