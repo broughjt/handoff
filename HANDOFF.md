@@ -123,7 +123,7 @@ command = "cargo test --quiet"
 timeout = 300
 ```
 
-The `id` field gives a persistent identifier to the check across handoffs, `claim` gives a natural language description of what a `true` result means, `command` is a shell command encoding the claim, and `timeout` is measured in seconds and defaults to 60. Check commands are executed from the project root, regardless of where the script was invoked. The checks run in parallel and are reported in file order, so a check's timeout is wall-clock time spent alongside the other checks.
+The `id` field gives a persistent identifier to the check across handoffs, `claim` gives a natural language description of what a `true` result means, `command` is a shell command encoding the claim, and `timeout` is measured in seconds and defaults to 60. Check commands are executed from the project root, regardless of where the script was invoked. The checks run in parallel and are reported in file order, so a check's timeout is wall-clock time spent alongside the other checks. When a check's shell exits or times out, its process group is killed.
 
 The possible outcomes for a claim are true (exit code 0), false (exit code 1), timeout (command runs past the timeout), and unknown (any other exit code). Your commands should squash exit codes to match this convention. For example:
 
