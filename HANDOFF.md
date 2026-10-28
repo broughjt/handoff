@@ -232,7 +232,7 @@ Each copy opens with a provenance line saying where it came from:
 
 The hash is of the source at the time it was copied. Hashing the copy shows whether a verbatim copy has been amended, and hashing the source shows whether the source has moved on since.
 
-- Never amend a verbatim copy, since other arcs may run against it. Fork it with `handoff workflow fork <arc> <name> <source>` and amend the fork.
+- Never amend a verbatim copy, since other arcs may run against it. Fork it with `handoff workflow fork <arc> <source> [<name>]` and amend the fork.
 - Amend forked and created workflows in place. Date the change in the file and record it in the update's log entry.
 - Neither `install` nor `fork` edits `start.toml`. Set `workflow` yourself to the reference they print.
 
@@ -270,7 +270,7 @@ Commands shown with `[arc]` take the arc as an optional last argument, which may
 | `handoff new <arc> [<workflow>]` | create an arc's files (uncommitted) |
 | `handoff workflow list` | list the workflows kept for reuse across projects |
 | `handoff workflow install <name>` | make a verbatim copy of a workflow at the handoff repository root |
-| `handoff workflow fork <arc> <name> <source>` | fork a reusable workflow or a reference |
+| `handoff workflow fork <arc> <source> [<name>]` | fork a reusable workflow or a reference |
 | `handoff guide` | output the path of this file |
 
 Exit codes: 0 for success; 1 when `check` finds a check that is not true or `lint` finds errors; 2 for a usage error or a refusal, such as `update --commit` finding stale results.
