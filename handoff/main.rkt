@@ -2,12 +2,44 @@
 ;; Automation for the handoff skills.
 
 (require racket/cmdline
+         racket/file
+         racket/format
+         racket/function
          racket/list
          racket/match
+         racket/math
          racket/path
+         racket/port
          racket/string
          racket/system
          "error.rkt")
+
+(require/typed racket/base
+  [current-inexact-monotonic-milliseconds (-> Flonum)]
+  [(alarm-evt monotonic-alarm-evt) (-> Real True (Evtof Any))])
+
+(require/typed racket/file
+  [make-temporary-directory (-> Path)])
+
+(require/typed toml
+  [parse-toml (-> String Table)])
+
+(module signal racket/base
+  (require ffi/unsafe)
+  (provide kill-group)
+  (define kill (get-ffi-obj "kill" #f (_fun _int _int -> _int)))
+  (define (kill-group pid)
+    (kill (- pid) 9)
+    (void)))
+
+(require/typed (submod "." signal)
+  [kill-group (-> Integer Void)])
+
+(provide (struct-out check)
+         (struct-out result)
+         parse-checks
+         result-outcome
+         print-results)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -226,7 +258,13 @@
 
 (: handle-check (-> Path String Status))
 (define (handle-check repository arc)
-  (error 'handle-check "unimplemented"))
+  (define checks (read-checks (build-path repository arc checks-file)))
+  (define results (run-checks (find-project-repository repository) checks))
+  (print-results results)
+  (if (andmap (λ ([result : result]) (eq? (result-outcome result) 'true))
+              results)
+      'success
+      'failure))
 
 (: handle-lint (-> Path String Status))
 (define (handle-lint repository arc)
@@ -287,6 +325,12 @@
                                  repository-path
                                  start)])))
 
+(: find-project-repository (-> Path Path))
+(define (find-project-repository repository)
+  (string->path
+   (or (git* (build-path repository 'up) "rev-parse" "--show-toplevel")
+       (raise-handoff-error "no project repository contains ~a" repository))))
+
 ;;; Arc helpers
 
 (define archive-tag-prefix "archive/")
@@ -328,6 +372,230 @@
        [(empty? (rest arcs)) (first arcs)]
        [else (raise-handoff-error "specify the arc; active arcs: ~a"
                                   (string-join arcs ", "))])]))
+
+;;; Checks
+
+(define checks-file "checks.toml")
+(define default-timeout : Positive-Real 60)
+(define capture-limit : Natural (* 1024 1024)) ;; 1 MiB
+(define output-lines 20)
+
+;; We store `timeout` in milliseconds, which is the unit of the monotonic
+;; clock. However, the checks.toml file specifies it in seconds.
+(struct check ([id : String]
+               [claim : String]
+               [command : String]
+               [timeout : Positive-Real])
+  #:transparent)
+
+;; `exit` is #f when the check timed out, `duration` is in milliseconds, and
+;; `truncated` counts the bytes dropped from the start of `output` to keep it
+;; under `capture-limit`.
+(struct result ([check : check]
+                [exit : (U Integer #f)]
+                [duration : Nonnegative-Real]
+                [output : String]
+                [truncated : Natural])
+  #:transparent)
+
+(define-type Outcome (U 'true 'false 'unknown 'timeout))
+
+(: exit-outcome (-> (U Integer #f) Outcome))
+(define (exit-outcome code)
+  (match code
+    [#f 'timeout]
+    [0 'true]
+    [1 'false]
+    [_ 'unknown]))
+
+(: result-outcome (-> result Outcome))
+(define result-outcome (compose exit-outcome result-exit))
+
+(: read-checks (-> Path (Listof check)))
+(define (read-checks path)
+  (unless (file-exists? path)
+    (raise-handoff-error "~a does not exist" path))
+  (parse-checks (file->string path) path))
+
+(: parse-checks (-> String Path (Listof check)))
+(define (parse-checks text source)
+  (define source-string (path->string source))
+  (define table
+    (with-handlers ([exn:fail? (λ ([error : exn])
+                                 (raise-handoff-error "~a: ~a"
+                                                      source-string
+                                                      (exn-message error)))])
+      (parse-toml text)))
+  (expect-fields table null (list 'check) source-string)
+  (define entries (hash-ref table 'check (const null)))
+  (unless (list? entries)
+    (raise-handoff-error "~a: check must be an array of tables" source-string))
+  (define checks
+    (for/list : (Listof check) ([entry (in-list entries)]
+                                [index (in-naturals)])
+      (parse-check entry (format "~a: check[~a]" source-string index))))
+  (define duplicate ((inst check-duplicates check String) checks #:key check-id))
+  (when duplicate
+    (raise-handoff-error "~a: check ~a appears more than once"
+                         source-string
+                         (check-id duplicate)))
+  checks)
+
+(: parse-check (-> Any String check))
+(define (parse-check entry context)
+  (unless (table? entry)
+    (raise-handoff-error "~a must be a table" context))
+  (expect-fields entry (list 'id 'claim 'command) (list 'timeout) context)
+  (define timeout (hash-ref entry 'timeout (const default-timeout)))
+  (define milliseconds (and (real? timeout) (* 1000 timeout)))
+  (check (expect-string entry 'id context)
+         (expect-string entry 'claim context)
+         (expect-string entry 'command context)
+         (if (and milliseconds (positive? milliseconds) (not (infinite? milliseconds)))
+             milliseconds
+             (raise-handoff-error "~a: timeout must be a positive number of seconds"
+                                  context))))
+
+(: run-checks (-> Path (Listof check) (Listof result)))
+(define (run-checks project checks)
+  (define bash (or (find-executable-path "bash")
+                   (raise-handoff-error "bash not found on PATH")))
+  (define directory (make-temporary-directory))
+  ;; Shutting the custodian down kills the process groups of the checks still
+  ;; running if we exit early.
+  (define custodian (make-custodian))
+  (dynamic-wind
+   void
+   (thunk
+     (parameterize ([current-custodian custodian]
+                    [current-subprocess-custodian-mode 'kill]
+                    [subprocess-group-enabled #t]
+                    [current-directory project])
+       (: start-check (-> check Path (Evtof result)))
+       (define (start-check check output)
+         (define started (current-inexact-monotonic-milliseconds))
+         (define process
+           (call-with-output-file output
+             (λ ([out : Output-Port])
+               (define-values (process _stdout stdin _stderr)
+                 (subprocess out #f out bash "-c" (check-command check)))
+               (close-output-port (assert stdin))
+               process)))
+         (define deadline (+ started (check-timeout check)))
+         (handle-evt
+          (choice-evt process (monotonic-alarm-evt deadline #t))
+          ;; `thunk` and `thunk*` cause type checking problems here
+          (λ (_) (finish-check check process output started))))
+       ;; A check is finished when its shell exits or its timeout deadline
+       ;; lapses. Either way we kill its process group, which also stops
+       ;; anything that the shell left running in the background.
+       (: finish-check (-> check Subprocess Path Flonum result))
+       (define (finish-check check process output started)
+         (define duration
+           (- (current-inexact-monotonic-milliseconds) started))
+         (define status (subprocess-status process))
+         (kill-group (subprocess-pid process))
+         (subprocess-wait process)
+         (define truncated
+           (max 0 (- (file-size output) capture-limit)))
+         (result check
+                 (if (eq? status 'running) #f status)
+                 (max 0.0 duration)
+                 (call-with-input-file output
+                   (λ ([in : Input-Port])
+                     (file-position in truncated)
+                     (port->string in)))
+                 truncated))
+       (define events
+         (for/hasheq : (Immutable-HashTable check (Evtof result))
+                     ([check (in-list checks)]
+                      [index (in-naturals)])
+           (values check
+                   (start-check check
+                                (build-path directory (number->string index))))))
+       (let loop : (Listof result)
+            ([pending : (Immutable-HashTable check (Evtof result)) events]
+             [finished : (Immutable-HashTable check result) (hasheq)])
+         (cond
+           [(hash-empty? pending)
+            (for/list : (Listof result) ([check (in-list checks)])
+              (hash-ref finished check))]
+           [else
+            (define result (apply sync (hash-values pending)))
+            (loop (hash-remove pending (result-check result))
+                  (hash-set finished (result-check result) result))]))))
+   (thunk
+     (custodian-shutdown-all custodian)
+     (delete-directory/files directory))))
+
+(: print-results (-> (Listof result) Void))
+(define (print-results results)
+  (for ([result (in-list results)])
+    (print-result result)
+    (newline))
+  (define counts
+    (for*/list : (Listof String)
+               ([outcome (in-list '(true false unknown timeout))]
+                [count (in-value (count (λ ([result : result])
+                                          (eq? (result-outcome result) outcome))
+                                        results))]
+                #:unless (zero? count))
+      (format "~a ~a" count outcome)))
+  (printf "summary: ~a\n"
+          (if (empty? counts)
+              "no checks"
+              (string-join counts ", "))))
+
+(: print-result (-> result Void))
+(define (print-result result)
+  (define check (result-check result))
+  (define outcome (result-outcome result))
+  (printf "id: ~a\n" (check-id check))
+  (printf "claim: ~a\n" (check-claim check))
+  (printf "outcome: ~a\n" outcome)
+  (case outcome
+    [(true) (void)]
+    [(timeout) (printf "timeout: ~as\n"
+                       (~r (/ (check-timeout check) 1000) #:precision '(= 1)))]
+    [else (printf "exit: ~a\n" (result-exit result))])
+  (printf "duration: ~as\n"
+          (~r (/ (result-duration result) 1000) #:precision '(= 1)))
+  (unless (eq? outcome 'true)
+    (unless (zero? (result-truncated result))
+      (printf "truncated: ~a bytes before the output were not kept\n"
+              (result-truncated result)))
+    (define lines (string-split (result-output result) "\n"))
+    (unless (empty? lines)
+      (define tail (take-right lines (min output-lines (length lines))))
+      (printf "output~a:\n"
+              (if (< (length tail) (length lines))
+                  (format " (last ~a of ~a lines)" (length tail) (length lines))
+                  ""))
+      (for ([line (in-list tail)])
+        (printf "  ~a\n" line)))))
+
+;;; TOML
+
+(define-type Table (Immutable-HashTable Symbol Any))
+(define-predicate table? Table)
+
+(: expect-fields (-> Table (Listof Symbol) (Listof Symbol) String Void))
+(define (expect-fields table required optional context)
+  (define (names [keys : (Listof Symbol)])
+    (string-join (sort (map symbol->string keys) string<?) ", "))
+  (define missing (remove* (hash-keys table) required))
+  (define unknown (remove* (append required optional) (hash-keys table)))
+  (unless (empty? missing)
+    (raise-handoff-error "~a is missing ~a" context (names missing)))
+  (unless (empty? unknown)
+    (raise-handoff-error "~a has unknown fields ~a" context (names unknown))))
+
+(: expect-string (-> Table Symbol String String))
+(define (expect-string table key context)
+  (define value (hash-ref table key #f))
+  (if (and (string? value) (non-empty-string? (string-trim value)))
+      value
+      (raise-handoff-error "~a: ~a must be a nonempty string" context key)))
 
 ;;; Git
 
