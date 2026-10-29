@@ -55,7 +55,18 @@
          compare-check-results
          check-matched-change
          print-results
-         print-comparisons)
+         print-comparisons
+         (struct-out arc-files)
+         (struct-out log-entry-files)
+         (struct-out arc)
+         (struct-out start)
+         (struct-out read-first)
+         (struct-out scope-path)
+         parse-start
+         parse-scope-path
+         parse-log-entry-name
+         parse-arc
+         lint)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -222,8 +233,9 @@
       [("--commit") "Commit the pending log entry once its entry.md is written"
                     (set! step 'commit)]
       #:args ([arc #f])
-      (update-subcommand (or step (raise-handoff-error "update requires --begin or --commit"))
-                      (and arc (assert arc string?))))]
+      (update-subcommand
+       (or step (raise-handoff-error "update requires --begin or --commit"))
+       (and arc (assert arc string?))))]
     [("new")
      (command-line
       #:program program
@@ -231,7 +243,8 @@
       #:help-labels
       "<workflow> is a name from handoff workflow list"
       #:args (arc [workflow #f])
-      (new-subcommand (assert arc string?) (and workflow (assert workflow string?))))]
+      (new-subcommand (assert arc string?)
+                      (and workflow (assert workflow string?))))]
     [("workflow")
      (command-line
       #:program program
@@ -267,8 +280,12 @@
                           (assert arc string?)
                           (assert source string?)
                           (and name (assert name string?))))]
-          [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork" verb)])))]
-    [("guide") (command-line #:program program #:argv arguments #:args () (guide-subcommand))]
+          [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork"
+                                     verb)])))]
+    [("guide") (command-line #:program program
+                             #:argv arguments
+                             #:args ()
+                             (guide-subcommand))]
     [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
                                subcommand)]))
 
@@ -295,7 +312,8 @@
        (define log-entry-index (find-baseline-log-entry repository arc))
        (define baseline (read-baseline-checks repository arc log-entry-index))
        (define results (run-checks project checks))
-       (print-comparisons (compare-check-results (check-run-results baseline) results)
+       (print-comparisons (compare-check-results (check-run-results baseline)
+                                                 results)
                           log-entry-index
                           (check-run-host baseline)
                           (check-run-started baseline))
@@ -312,7 +330,19 @@
 
 (: handle-lint (-> Path String Status))
 (define (handle-lint repository arc)
-  (error 'handle-lint "unimplemented"))
+  (define files (read-arc-files repository arc))
+  (define diagnostics
+    (with-handlers ([exn:fail:handoff:arc? exn:fail:handoff:arc-messages])
+      (lint files (parse-arc files))))
+  (for ([diagnostic (in-list diagnostics)])
+    (displayln diagnostic))
+  (printf "~a: ~a\n"
+          arc
+          (case (length diagnostics)
+            [(0) "no errors"]
+            [(1) "1 error"]
+            [else (format "~a errors" (length diagnostics))]))
+  (if (empty? diagnostics) 'success 'failure))
 
 (: handle-start (-> Path String Status))
 (define (handle-start repository* name)
@@ -379,15 +409,16 @@
 
 (define archive-tag-prefix "archive/")
 
-(: arc? (-> Path Boolean))
-(define (arc? path)
+(: arc-directory? (-> Path Boolean))
+(define (arc-directory? path)
   (and (directory-exists? path) (file-exists? (build-path path start-file))))
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs repository)
   ;; Note: `directory-list` sorts by `path<?`.
-  (for/list : (Listof String) ([entry (in-list (directory-list repository))]
-                               #:when (arc? (build-path repository entry)))
+  (for/list : (Listof String)
+            ([entry (in-list (directory-list repository))]
+             #:when (arc-directory? (build-path repository entry)))
     (path->string entry)))
 
 (: list-archived-arcs (-> Path (Listof String)))
@@ -463,7 +494,8 @@
 
 (: check-result-outcome (-> check-result Outcome))
 (define check-result-outcome
-  (compose1 (compose1 exit-outcome check-observation-exit) check-result-observation))
+  (compose1 (compose1 exit-outcome check-observation-exit)
+            check-result-observation))
 
 (: milliseconds->seconds (-> Nonnegative-Real Nonnegative-Exact-Rational))
 (define (milliseconds->seconds milliseconds)
@@ -489,20 +521,17 @@
 (: parse-checks (-> String Path (Listof check)))
 (define (parse-checks text source)
   (define source-string (path->string source))
-  (define table
-    (with-handlers ([exn:fail? (λ ([error : exn])
-                                 (raise-handoff-error "~a: ~a"
-                                                      source-string
-                                                      (exn-message error)))])
-      (parse-toml text)))
+  (define table (read-toml text source-string))
   (expect-fields table null (list 'check) source-string)
   (define checks
-    (for/list : (Listof check) ([entry (in-list (check-tables table source-string))]
-                                [index (in-naturals)])
+    (for/list : (Listof check)
+              ([entry (in-list (check-tables table source-string))]
+               [index (in-naturals)])
       (define context (format "~a: check[~a]" source-string index))
       (expect-fields entry check-fields check-optional-fields context)
       (table->check entry context)))
-  (define duplicate ((inst check-duplicates check String) checks #:key check-id))
+  (define duplicate ((inst check-duplicates check String) checks
+                                                          #:key check-id))
   (when duplicate
     (raise-handoff-error "~a: check ~a appears more than once"
                          source-string
@@ -512,12 +541,7 @@
 (: parse-check-run (-> String Path check-run))
 (define (parse-check-run text source)
   (define source-string (path->string source))
-  (define table
-    (with-handlers ([exn:fail? (λ ([error : exn])
-                                 (raise-handoff-error "~a: ~a"
-                                                      source-string
-                                                      (exn-message error)))])
-      (parse-toml text)))
+  (define table (read-toml text source-string))
   (expect-fields table (list 'run 'project) (list 'check) source-string)
   (define run-context (format "~a: run" source-string))
   (define project-context (format "~a: project" source-string))
@@ -526,8 +550,9 @@
   (expect-fields run (list 'host 'started 'duration) null run-context)
   (expect-fields project null (list 'branch 'head) project-context)
   (define results
-    (for/list : (Listof check-result) ([entry (in-list (check-tables table source-string))]
-                                       [index (in-naturals)])
+    (for/list : (Listof check-result)
+              ([entry (in-list (check-tables table source-string))]
+               [index (in-naturals)])
       (define context (format "~a: check[~a]" source-string index))
       (expect-fields entry
                      (append check-fields observation-fields)
@@ -662,7 +687,8 @@
                  (subprocess out #f out bash "-c" (check-command check)))
                (close-output-port (assert stdin))
                process)))
-         (define deadline (+ started (seconds->milliseconds (check-timeout check))))
+         (define deadline (+ started
+                             (seconds->milliseconds (check-timeout check))))
          (handle-evt
           (choice-evt process (monotonic-alarm-evt deadline #t))
           ;; `thunk` and `thunk*` cause type checking problems here
@@ -693,9 +719,9 @@
          (for/hasheq : (Immutable-HashTable check (Evtof check-result))
                      ([check (in-list checks)]
                       [index (in-naturals)])
-           (values check
-                   (start-check check
-                                (build-path directory (number->string index))))))
+           (values
+            check
+            (start-check check (build-path directory (number->string index))))))
        (let loop : (Listof check-result)
             ([pending : (Immutable-HashTable check (Evtof check-result)) events]
              [finished : (Immutable-HashTable check check-result) (hasheq)])
@@ -729,7 +755,9 @@
   (define path (format "~a/log/~a/~a" arc log-entry-index results-file))
   (define text
     (or (git* repository "show" (string-append "HEAD:" path))
-        (raise-handoff-error "log/~a has no committed ~a" log-entry-index results-file)))
+        (raise-handoff-error "log/~a has no committed ~a"
+                             log-entry-index
+                             results-file)))
   (parse-check-run text (string->path path)))
 
 (: find-latest-log-entry (-> String (Listof String) (U Positive-Integer #f)))
@@ -753,7 +781,12 @@
 (define-type Check-Comparison (U check-added check-removed check-matched))
 
 (define-type Change
-  (U 'redefined 'unchanged 'contradicted 'unverified 'verified 'still-unverified))
+  (U 'redefined
+     'unchanged
+     'contradicted
+     'unverified
+     'verified
+     'still-unverified))
 
 (: compare-check-results (-> (Listof check-result)
                              (Listof check-result)
@@ -813,7 +846,11 @@
     (newline))
   (print-summary results))
 
-(: print-comparisons (-> (Listof Check-Comparison) Positive-Integer String Moment Void))
+(: print-comparisons (-> (Listof Check-Comparison)
+                         Positive-Integer
+                         String
+                         Moment
+                         Void))
 (define (print-comparisons comparisons log-entry-index host started)
   (printf "compared against log/~a, recorded on ~a at ~a\n\n"
           log-entry-index
@@ -846,7 +883,8 @@
        (print-result-details after)
        (when show-earlier-output?
          (print-output (format "output at log/~a" log-entry-index)
-                       (check-observation-output (check-result-observation before))))
+                       (check-observation-output
+                        (check-result-observation before))))
        (newline)]
       [(check-removed _) (void)]))
   (define removed
@@ -854,7 +892,10 @@
                                  #:when (check-removed? comparison))
       (check-result-check (check-removed-before comparison))))
   (for ([check (in-list removed)])
-    (printf "removed since log/~a: ~a (~a)\n" log-entry-index (check-id check) (check-claim check)))
+    (printf "removed since log/~a: ~a (~a)\n"
+            log-entry-index
+            (check-id check)
+            (check-claim check)))
   (unless (empty? removed)
     (newline))
   (print-summary
@@ -881,7 +922,8 @@
     [(true) (void)]
     [(timeout) (printf "timeout: ~as\n" (format-seconds (check-timeout check)))]
     [else (printf "exit: ~a\n" (check-observation-exit observation))])
-  (printf "duration: ~as\n" (format-seconds (check-observation-duration observation)))
+  (printf "duration: ~as\n"
+          (format-seconds (check-observation-duration observation)))
   (unless (eq? outcome 'true)
     (unless (zero? (check-observation-truncated observation))
       (printf "truncated: ~a bytes before the output were not kept\n"
@@ -922,10 +964,375 @@
               "no checks"
               (string-join counts ", "))))
 
+;;; Reading arcs
+
+(define state-files
+  (list "arc.md"
+        "tasks.md"
+        "do-not-reopen.md"
+        "open-questions.md"
+        "review.md"))
+(define log-directory "log")
+(define entry-file "entry.md")
+
+(struct arc-files ([name : String]
+                   [texts : (Listof (Pairof String (U String #f)))]
+                   [documents : (Listof (Pairof scope-path (U String #f)))]
+                   [log : (U (Listof log-entry-files) #f)]
+                   [committed-log : (Listof String)]
+                   [references : (Listof (Pairof scope-path Boolean))])
+  #:transparent)
+
+(struct log-entry-files ([name : String]
+                         [directory? : Boolean]
+                         [entry : (U String #f)]
+                         [results : (U String #f)])
+  #:transparent)
+
+(: read-arc-files (-> Path String arc-files))
+(define (read-arc-files repository name)
+  (define arc-directory (build-path repository name))
+  (define log-path (build-path arc-directory log-directory))
+  (define start-path (build-path arc-directory start-file))
+  (define start-text (and (file-exists? start-path) (file->string start-path)))
+  (define start*
+    (and start-text
+         (with-handlers ([exn:fail:handoff? (const #f)])
+           (parse-start start-text (build-path name start-file)))))
+  (define committed
+    (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
+          (string-append name "/" log-directory "/")))
+  (arc-files
+   name
+   (cons (cons start-file start-text)
+         (for/list : (Listof (Pairof String (U String #f)))
+                   ([file (in-list (cons checks-file state-files))])
+           (define path (build-path arc-directory file))
+           (cons file (and (file-exists? path) (file->string path)))))
+   (read-arc-documents repository arc-directory)
+   (cond
+     [(directory-exists? log-path)
+      (for/list : (Listof log-entry-files)
+                ([entry (in-list (directory-list log-path))])
+        (define path (build-path log-path entry))
+        (define entry-path (build-path path entry-file))
+        (define results-path (build-path path results-file))
+        (log-entry-files (path->string entry)
+                         (directory-exists? path)
+                         (and (file-exists? entry-path)
+                              (file->string entry-path))
+                         (and (file-exists? results-path)
+                              (file->string results-path))))]
+     [(or (file-exists? log-path) (link-exists? log-path)) #f]
+     [else null])
+   (if committed
+       (for/list : (Listof String)
+                 ([path (in-list (string-split committed "\u0000"))])
+         (define-values (_base entry _directory?) (split-path path))
+         (path->string (assert entry path?)))
+       null)
+   (if start*
+       (let ([project (find-project-repository repository)])
+         (define references
+           (cons (start-workflow start*)
+                 (map read-first-path (start-read-first start*))))
+         (for/list : (Listof (Pairof scope-path Boolean))
+                   ([path (in-list references)])
+           (cons path
+                 (file-exists? (resolve-scope-path repository
+                                                   name
+                                                   project
+                                                   path)))))
+       null)))
+
+(: read-arc-documents (-> Path Path (Listof (Pairof scope-path (U String #f)))))
+(define (read-arc-documents repository arc-directory)
+  (define layout
+    (map string->path
+         (list* start-file checks-file log-directory state-files)))
+  (define (markdown [path : Path])
+    (and (path-has-extension? path #".md")
+         (file-exists? path)
+         (file->string path)))
+  (append
+   (for/list : (Listof (Pairof scope-path (U String #f)))
+             ([entry (in-list (directory-list arc-directory))]
+              #:unless (member entry layout))
+     (define path (build-path arc-directory entry))
+     (cons (scope-path 'arc (if (directory-exists? path)
+                                (path->directory-path entry)
+                                entry))
+           (markdown path)))
+   (for*/list : (Listof (Pairof scope-path (U String #f)))
+              ([entry (in-list (directory-list repository))]
+               [text (in-value (markdown (build-path repository entry)))]
+               #:when text)
+     (cons (scope-path 'handoff entry) text))))
+
+;;; Parsing arcs
+
+(struct arc ([name : String]
+             [start : start]
+             [checks : (Listof check)]
+             [log-entries : (Listof Positive-Integer)]
+             [pending : (U Positive-Integer #f)])
+  #:transparent)
+
+(struct start ([next : String]
+               [workflow : scope-path]
+               [read-first : (Listof read-first)])
+  #:transparent)
+
+(struct read-first ([path : scope-path] [reason : String]) #:transparent)
+
+(define-type Scope (U 'arc 'handoff 'project))
+(struct scope-path ([scope : Scope] [path : Path]) #:transparent)
+
+(: parse-arc (-> arc-files arc))
+(define (parse-arc files)
+  (define name (arc-files-name files))
+  (define errors : (Listof String) null)
+  (: attempt (All (A) (-> (-> A) (U A #f))))
+  (define (attempt parse)
+    (with-handlers ([exn:fail:handoff?
+                     (λ ([error : exn])
+                       (set! errors (cons (exn-message error) errors))
+                       #f)])
+      (parse)))
+  (define start*
+    (attempt (thunk (parse-start (arc-file files start-file)
+                                (build-path name start-file)))))
+  (define checks
+    (attempt (thunk (parse-checks (arc-file files checks-file)
+                                 (build-path name checks-file)))))
+  (for ([file (in-list state-files)])
+    (attempt (thunk (arc-file files file))))
+  (define log* (attempt (thunk (parse-arc-log files))))
+  (cond
+    [(and start* checks log* (empty? errors))
+     (define entries
+       (sort (filter-map (compose1 parse-log-entry-name
+                                   log-entry-files-name)
+                         log*)
+             <))
+     (define committed (filter-map parse-log-entry-name
+                                   (arc-files-committed-log files)))
+     (define latest (and (pair? entries) (last entries)))
+     (define pending (and latest (not (memv latest committed)) latest))
+     (arc name start* checks entries pending)]
+    [else (raise-arc-errors (reverse errors))]))
+
+(: arc-file (-> arc-files String String))
+(define (arc-file files file)
+  (define entry (assoc file (arc-files-texts files)))
+  (or (and entry (cdr entry))
+      (raise-handoff-error "~a: expected a regular file"
+                           (build-path (arc-files-name files) file))))
+
+(: parse-arc-log (-> arc-files (Listof log-entry-files)))
+(define (parse-arc-log files)
+  (or (arc-files-log files)
+      (raise-handoff-error "~a: expected a directory"
+                           (build-path (arc-files-name files) log-directory))))
+
+(: parse-start (-> String Path start))
+(define (parse-start text source)
+  (define source-string (path->string source))
+  (define table (read-toml text source-string))
+  (expect-fields table (list 'next 'workflow 'read-first) null source-string)
+  (define entries (hash-ref table 'read-first))
+  (unless (list? entries)
+    (raise-handoff-error "~a: read-first must be an array of tables"
+                         source-string))
+  (start (expect-string table 'next source-string)
+         (expect-scope-path table 'workflow source-string)
+         (for/list : (Listof read-first) ([entry (in-list entries)]
+                                          [index (in-naturals)])
+           (define context (format "~a: read-first[~a]" source-string index))
+           (define read (expect-table entry context))
+           (expect-fields read (list 'path 'reason) null context)
+           (read-first (expect-scope-path read 'path context)
+                       (expect-string read 'reason context)))))
+
+(: expect-scope-path (-> Table Symbol String scope-path))
+(define (expect-scope-path table key context)
+  (define text (expect-string table key context))
+  (or (parse-scope-path text)
+      (raise-handoff-error "~a: ~a must be arc:, handoff: or project: followed by a relative path without .."
+                           context
+                           key)))
+
+(: parse-scope-path (-> String (U scope-path #f)))
+(define (parse-scope-path text)
+  (match (regexp-match #px"^(arc|handoff|project):([^\u0000]+)$" text)
+    [(list _ (? string? scope) (? string? relative))
+     (define path (string->path relative))
+     (and (relative-path? path)
+          (not (memq 'up (explode-path path)))
+          (scope-path (case scope
+                        [("arc") 'arc]
+                        [("handoff") 'handoff]
+                        [else 'project])
+                      path))]
+    [_ #f]))
+
+(: scope-path->string (-> scope-path String))
+(define (scope-path->string path)
+  (format "~a:~a"
+          (scope-path-scope path)
+          (path->string (scope-path-path path))))
+
+(: resolve-scope-path (-> Path String Path scope-path Path))
+(define (resolve-scope-path repository arc project path)
+  (build-path (case (scope-path-scope path)
+                [(arc) (build-path repository arc)]
+                [(handoff) repository]
+                [(project) project])
+              (scope-path-path path)))
+
+(: parse-log-entry-name (-> String (U Positive-Integer #f)))
+(define (parse-log-entry-name name)
+  (define number (and (regexp-match? #px"^[1-9][0-9]*$" name)
+                      (string->number name)))
+  (and (exact-positive-integer? number) number))
+
+;;; Lint
+
+(define placeholder-check-id "replace-me")
+
+(: lint (-> arc-files arc (Listof String)))
+(define (lint files parsed)
+  (append
+   (for/list : (Listof String)
+             ([reference (in-list (arc-files-references files))]
+              #:unless (cdr reference))
+     (format "~a: ~a is not a regular file"
+             (build-path (arc-name parsed) start-file)
+             (scope-path->string (car reference))))
+   (for/list : (Listof String)
+             ([check (in-list (arc-checks parsed))]
+              #:when (equal? (check-id check) placeholder-check-id))
+     (format "~a: check ~a is the placeholder from handoff new; replace it with the arc's checks"
+             (build-path (arc-name parsed) checks-file)
+             placeholder-check-id))
+   (for*/list : (Listof String)
+              ([document (in-list (arc-files-documents files))]
+               [issue (in-value (let ([text (cdr document)])
+                                  (and text
+                                       (not (verbatim-copy? text))
+                                       (summary-issue text))))]
+               #:when issue)
+     (define path (car document))
+     (format "~a: ~a"
+             (if (eq? (scope-path-scope path) 'arc)
+                 (build-path (arc-name parsed) (scope-path-path path))
+                 (scope-path-path path))
+             issue))
+   (append*
+    (for/list : (Listof (Listof String))
+              ([entry (in-list (sort (parse-arc-log files)
+                                     log-entry-files<?))])
+      (define path (build-path (arc-name parsed)
+                               log-directory
+                               (log-entry-files-name entry)))
+      (define number (parse-log-entry-name (log-entry-files-name entry)))
+      (define pending? (eqv? number (arc-pending parsed)))
+      (define text (log-entry-files-entry entry))
+      (define results (log-entry-files-results entry))
+      (cond
+        [(not number)
+         (list (format "~a: expected a log entry number, a positive integer without leading zeros"
+                       path))]
+        [(not (log-entry-files-directory? entry))
+         (list (format "~a: expected a directory" path))]
+        [else
+         (append
+          (cond
+            [pending? null]
+            [(not text) (list (format "~a: expected a regular file"
+                                      (build-path path entry-file)))]
+            [(not (entry-headline text))
+             (list (format "~a: expected a heading on its first nonblank line"
+                           (build-path path entry-file)))]
+            [else null])
+          (cond
+            [results
+             (with-handlers ([exn:fail:handoff? (compose1 (inst list String)
+                                                          exn-message)])
+               (parse-check-run results (build-path path results-file))
+               null)]
+            [pending? null]
+            [else (list (format "~a: expected a regular file"
+                                (build-path path results-file)))]))])))))
+
+(: log-entry-files<? (-> log-entry-files log-entry-files Boolean))
+(define (log-entry-files<? a b)
+  (define a-number (parse-log-entry-name (log-entry-files-name a)))
+  (define b-number (parse-log-entry-name (log-entry-files-name b)))
+  (cond
+    [(and a-number b-number) (< a-number b-number)]
+    [(or a-number b-number) (and a-number #t)]
+    [else (string<? (log-entry-files-name a) (log-entry-files-name b))]))
+
+;;; Markdown
+
+;; The lines of the first paragraph after a document's provenance line and
+;; opening headings.
+(: first-paragraph (-> String (Listof String)))
+(define (first-paragraph text)
+  (define (skip? [line : String])
+    (or (string=? (string-trim line) "") (regexp-match? #px"^ {0,3}#" line)))
+  (define lines (string-split (strip-provenance text) "\n" #:trim? #f))
+  (takef (dropf lines skip?) (negate skip?)))
+
+(define non-prose-openings
+  (list #px"^[-*+]\\s"
+        #px"^[0-9]+[.)]\\s"
+        #px"^(```|~~~)"
+        #px"^\\|"
+        #px"^<"))
+
+(: summary-issue (-> String (U String #f)))
+(define (summary-issue text)
+  (define paragraph (first-paragraph text))
+  (cond
+    [(empty? paragraph)
+     "expected a paragraph of prose after the opening headings"]
+    [(let ([line (string-trim (first paragraph) #:right? #f)])
+       (ormap (λ ([opening : Regexp]) (regexp-match? opening line))
+              non-prose-openings))
+     "expected a paragraph of prose after the opening headings, not a list, code block, table, or HTML"]
+    [else #f]))
+
+(: verbatim-copy? (-> String Boolean))
+(define (verbatim-copy? text)
+  (regexp-match? #px"^<!-- copied [^\n]*; verbatim -->\n" text))
+
+(: strip-provenance (-> String String))
+(define (strip-provenance text)
+  (regexp-replace #px"^<!-- (copied|forked|created) [^\n]*-->\n" text ""))
+
+;; The text of the heading on an entry's first nonblank line.
+(: entry-headline (-> String (U String #f)))
+(define (entry-headline text)
+  (define line
+    (findf (compose1 non-empty-string? string-trim) (string-split text "\n")))
+  (define heading (and line
+                       (regexp-match #px"^ {0,3}#{1,6}[ \t]+(.*\\S)" line)))
+  (and heading (second heading)))
+
 ;;; TOML
 
 (define-type Table (Immutable-HashTable Symbol Any))
 (define-predicate table? Table)
+
+(: read-toml (-> String String Table))
+(define (read-toml text source)
+  (with-handlers ([exn:fail? (λ ([error : exn])
+                               (raise-handoff-error "~a: ~a"
+                                                    source
+                                                    (exn-message error)))])
+    (parse-toml text)))
 
 (: expect-fields (-> Table (Listof Symbol) (Listof Symbol) String Void))
 (define (expect-fields table required optional context)
@@ -963,7 +1370,9 @@
   (define value (hash-ref table key #f))
   (if (moment? value)
       value
-      (raise-handoff-error "~a: ~a must be a datetime with an offset" context key)))
+      (raise-handoff-error "~a: ~a must be a datetime with an offset"
+                           context
+                           key)))
 
 ;; We escape strings ourselves, since toml-lib's writer uses Racket's escapes
 ;; and so output with an ANSI escape (\e) or a bell (\a) would not read back.
@@ -980,7 +1389,10 @@
       [(char=? c #\tab) (write-char c out)]
       [(or (char<? c #\space) (char=? c #\rubout))
        (write-string "\\u" out)
-       (write-string (~r (char->integer c) #:base (list 'up 16) #:min-width 4 #:pad-string "0")
+       (write-string (~r (char->integer c)
+                         #:base (list 'up 16)
+                         #:min-width 4
+                         #:pad-string "0")
                      out)]
       [else (write-char c out)]))
   (write-string (if multiline? "\"\"\"" "\"") out)
