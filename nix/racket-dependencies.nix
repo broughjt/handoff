@@ -1,5 +1,7 @@
 # This is a manual closure of the toml-lib dependencies. We add `tzdata` so the
-# `gregor` library can use it.
+# `gregor` library can use it. The patch fixes toml-lib's floats, which lose
+# leading zeros in their fractional part (0.05 reads as 0.5) and the sign of a
+# negative float whose integer part is zero (-0.5 reads as 0.5).
 {
   lib,
   stdenvNoCC,
@@ -63,6 +65,7 @@ stdenvNoCC.mkDerivation {
       '') packages
     )}
     chmod -R u+w packages
+    patch -d packages/toml-lib -p1 < ${./toml-lib-floats.patch}
     raco pkg install --batch --no-docs --scope user --deps fail --copy packages/*
     runHook postBuild
   '';
