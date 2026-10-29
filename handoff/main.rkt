@@ -24,6 +24,12 @@
 (require/typed toml
   [parse-toml (-> String Table)])
 
+(require/typed gregor
+  [#:opaque Moment moment?]
+  [->posix (-> Moment Real)]
+  [posix->moment (-> Real Integer Moment)]
+  [moment->iso8601 (-> Moment String)])
+
 (module signal racket/base
   (require ffi/unsafe)
   (provide kill-group)
@@ -36,10 +42,21 @@
   [kill-group (-> Integer Void)])
 
 (provide (struct-out check)
-         (struct-out result)
+         (struct-out check-observation)
+         (struct-out check-result)
+         (struct-out check-run)
+         (struct-out check-added)
+         (struct-out check-removed)
+         (struct-out check-matched)
+         check-result-outcome
          parse-checks
-         result-outcome
-         print-results)
+         parse-check-run
+         write-check-run
+         find-latest-log-entry
+         compare-check-results
+         check-matched-change
+         print-results
+         print-comparisons)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -70,8 +87,8 @@
           [(list-subcommand archived?) (handle-list repository archived?)]
           [(start-subcommand arc)
            (handle-start repository (select-arc repository arc))]
-          [(check-subcommand arc)
-           (handle-check repository (select-arc repository arc))]
+          [(check-subcommand arc compare?)
+           (handle-check repository (select-arc repository arc) compare?)]
           [(lint-subcommand arc)
            (handle-lint repository (select-arc repository arc))]
           [(update-subcommand 'begin arc)
@@ -113,7 +130,9 @@
      guide-subcommand))
 (struct list-subcommand ([archived? : Boolean]) #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
-(struct check-subcommand ([arc : (U String #f)]) #:transparent)
+(struct check-subcommand ([arc : (U String #f)]
+                          [compare? : Boolean])
+  #:transparent)
 (struct new-subcommand ([arc : String]
                         [workflow : (U String #f)])
   #:transparent)
@@ -182,7 +201,16 @@
       #:args ()
       (list-subcommand archived?))]
     [("start") (start-subcommand (parse-arc-argument program arguments))]
-    [("check") (check-subcommand (parse-arc-argument program arguments))]
+    [("check")
+     (define compare? : Boolean #f)
+     (command-line
+      #:program program
+      #:argv arguments
+      #:once-each
+      [("--compare") "Compare the results with those of the last handoff"
+                     (set! compare? #t)]
+      #:args ([arc #f])
+      (check-subcommand (and arc (assert arc string?)) compare?))]
     [("lint") (lint-subcommand (parse-arc-argument program arguments))]
     [("update")
      (define step : (U 'begin 'commit #f) #f)
@@ -256,12 +284,29 @@
     (displayln arc-name))
   'success)
 
-(: handle-check (-> Path String Status))
-(define (handle-check repository arc)
+(: handle-check (-> Path String Boolean Status))
+(define (handle-check repository arc compare?)
   (define checks (read-checks (build-path repository arc checks-file)))
-  (define results (run-checks (find-project-repository repository) checks))
-  (print-results results)
-  (if (andmap (λ ([result : result]) (eq? (result-outcome result) 'true))
+  (define project (find-project-repository repository))
+  (define results
+    (cond
+      [compare?
+       ;; Read the baseline first, so that if it is broken, we refuse with an
+       ;; error before running the checks.
+       (define log-entry-index (find-baseline-log-entry repository arc))
+       (define baseline (read-baseline-checks repository arc log-entry-index))
+       (define results (run-checks project checks))
+       (print-comparisons (compare-check-results (check-run-results baseline) results)
+                          log-entry-index
+                          (check-run-host baseline)
+                          (check-run-started baseline))
+       results]
+      [else
+       (define results (run-checks project checks))
+       (print-results results)
+       results]))
+  (if (andmap (λ ([result : check-result])
+                (eq? (check-result-outcome result) 'true))
               results)
       'success
       'failure))
@@ -376,7 +421,8 @@
 ;;; Checks
 
 (define checks-file "checks.toml")
-(define default-timeout : Positive-Real 60)
+(define results-file "results.toml")
+(define default-timeout : Positive-Integer (* 60 1000)) ;; 60 s
 (define capture-limit : Natural (* 1024 1024)) ;; 1 MiB
 (define output-lines 20)
 
@@ -385,17 +431,29 @@
 (struct check ([id : String]
                [claim : String]
                [command : String]
-               [timeout : Positive-Real])
+               [timeout : Positive-Integer])
+  #:transparent)
+
+(struct check-result ([check : check]
+                      [observation : check-observation])
   #:transparent)
 
 ;; `exit` is #f when the check timed out, `duration` is in milliseconds, and
 ;; `truncated` counts the bytes dropped from the start of `output` to keep it
 ;; under `capture-limit`.
-(struct result ([check : check]
-                [exit : (U Integer #f)]
-                [duration : Nonnegative-Real]
-                [output : String]
-                [truncated : Natural])
+(struct check-observation ([exit : (U Integer #f)]
+                           [duration : Natural]
+                           [output : String]
+                           [truncated : Natural])
+  #:transparent)
+
+;; `started` is in seconds since the epoch and `duration` is in milliseconds.
+(struct check-run ([host : String]
+                   [started : Integer]
+                   [duration : Natural]
+                   [branch : (U String #f)]
+                   [head : (U String #f)]
+                   [results : (Listof check-result)])
   #:transparent)
 
 (define-type Outcome (U 'true 'false 'unknown 'timeout))
@@ -408,8 +466,16 @@
     [1 'false]
     [_ 'unknown]))
 
-(: result-outcome (-> result Outcome))
-(define result-outcome (compose exit-outcome result-exit))
+(: check-result-outcome (-> check-result Outcome))
+(define check-result-outcome
+  (compose1 (compose1 exit-outcome check-observation-exit) check-result-observation))
+
+;;; Reading and writing checks.toml and results.toml
+
+(define check-fields (list 'id 'claim 'command))
+(define check-optional-fields (list 'timeout))
+(define observation-fields (list 'duration 'output))
+(define observation-optional-fields (list 'exit 'truncated))
 
 (: read-checks (-> Path (Listof check)))
 (define (read-checks path)
@@ -427,13 +493,12 @@
                                                       (exn-message error)))])
       (parse-toml text)))
   (expect-fields table null (list 'check) source-string)
-  (define entries (hash-ref table 'check (const null)))
-  (unless (list? entries)
-    (raise-handoff-error "~a: check must be an array of tables" source-string))
   (define checks
-    (for/list : (Listof check) ([entry (in-list entries)]
+    (for/list : (Listof check) ([entry (in-list (check-tables table source-string))]
                                 [index (in-naturals)])
-      (parse-check entry (format "~a: check[~a]" source-string index))))
+      (define context (format "~a: check[~a]" source-string index))
+      (expect-fields entry check-fields check-optional-fields context)
+      (table->check entry context)))
   (define duplicate ((inst check-duplicates check String) checks #:key check-id))
   (when duplicate
     (raise-handoff-error "~a: check ~a appears more than once"
@@ -441,22 +506,143 @@
                          (check-id duplicate)))
   checks)
 
-(: parse-check (-> Any String check))
-(define (parse-check entry context)
-  (unless (table? entry)
-    (raise-handoff-error "~a must be a table" context))
-  (expect-fields entry (list 'id 'claim 'command) (list 'timeout) context)
-  (define timeout (hash-ref entry 'timeout (const default-timeout)))
-  (define milliseconds (and (real? timeout) (* 1000 timeout)))
-  (check (expect-string entry 'id context)
-         (expect-string entry 'claim context)
-         (expect-string entry 'command context)
-         (if (and milliseconds (positive? milliseconds) (not (infinite? milliseconds)))
-             milliseconds
-             (raise-handoff-error "~a: timeout must be a positive number of seconds"
-                                  context))))
+(: parse-check-run (-> String Path check-run))
+(define (parse-check-run text source)
+  (define source-string (path->string source))
+  (define table
+    (with-handlers ([exn:fail? (λ ([error : exn])
+                                 (raise-handoff-error "~a: ~a"
+                                                      source-string
+                                                      (exn-message error)))])
+      (parse-toml text)))
+  (expect-fields table (list 'run 'project) (list 'check) source-string)
+  (define run-context (format "~a: run" source-string))
+  (define project-context (format "~a: project" source-string))
+  (define run (expect-table (hash-ref table 'run) run-context))
+  (define project (expect-table (hash-ref table 'project) project-context))
+  (expect-fields run (list 'host 'started 'duration) null run-context)
+  (expect-fields project null (list 'branch 'head) project-context)
+  (define results
+    (for/list : (Listof check-result) ([entry (in-list (check-tables table source-string))]
+                                       [index (in-naturals)])
+      (define context (format "~a: check[~a]" source-string index))
+      (expect-fields entry
+                     (append check-fields observation-fields)
+                     (append check-optional-fields observation-optional-fields)
+                     context)
+      (check-result (table->check entry context)
+                    (table->check-observation entry context))))
+  (define duplicate
+    ((inst check-duplicates check-result String)
+     results
+     #:key (compose1 check-id check-result-check)))
+  (when duplicate
+    (raise-handoff-error "~a: check ~a appears more than once"
+                         source-string
+                         (check-id (check-result-check duplicate))))
+  (check-run (expect-string run 'host run-context)
+             (expect-datetime run 'started run-context)
+             (expect-seconds run 'duration run-context)
+             (and (hash-has-key? project 'branch)
+                  (expect-string project 'branch project-context))
+             (and (hash-has-key? project 'head)
+                  (expect-string project 'head project-context))
+             results))
 
-(: run-checks (-> Path (Listof check) (Listof result)))
+(: check-tables (-> Table String (Listof Table)))
+(define (check-tables table source)
+  (define entries (hash-ref table 'check (const null)))
+  (unless (list? entries)
+    (raise-handoff-error "~a: check must be an array of tables" source))
+  (for/list : (Listof Table) ([entry (in-list entries)]
+                              [index (in-naturals)])
+    (expect-table entry (format "~a: check[~a]" source index))))
+
+(: table->check (-> Table String check))
+(define (table->check table context)
+  (check (expect-string table 'id context)
+         (expect-string table 'claim context)
+         (expect-string table 'command context)
+         (expect-timeout table context)))
+
+(: table->check-observation (-> Table String check-observation))
+(define (table->check-observation table context)
+  (define exit (hash-ref table 'exit #f))
+  (unless (or (not exit) (exact-integer? exit))
+    (raise-handoff-error "~a: exit must be an integer" context))
+  (define output (hash-ref table 'output))
+  (unless (string? output)
+    (raise-handoff-error "~a: output must be a string" context))
+  (check-observation exit
+                     (expect-seconds table 'duration context)
+                     output
+                     (if (hash-has-key? table 'truncated)
+                         (expect-natural table 'truncated context)
+                         0)))
+
+(: expect-timeout (-> Table String Positive-Integer))
+(define (expect-timeout table context)
+  (define milliseconds
+    (if (hash-has-key? table 'timeout)
+        (expect-seconds table 'timeout context)
+        default-timeout))
+  (if (positive? milliseconds)
+      milliseconds
+      (raise-handoff-error "~a: timeout must be a positive number of seconds"
+                           context)))
+
+;; Seconds are read into whole milliseconds.
+(: expect-seconds (-> Table Symbol String Natural))
+(define (expect-seconds table key context)
+  (define seconds (hash-ref table key #f))
+  (define milliseconds
+    (and (rational? seconds) (exact-round (* 1000 seconds))))
+  (if (exact-nonnegative-integer? milliseconds)
+      milliseconds
+      (raise-handoff-error "~a: ~a must be a nonnegative number of seconds"
+                           context
+                           key)))
+
+(: write-check-run (-> check-run Void))
+(define (write-check-run run)
+  (define (field [key : String] [value : String])
+    (printf "~a = ~a\n" key value))
+  (printf "[run]\n")
+  (field "host" (toml-string (check-run-host run)))
+  (field "started" (moment->iso8601 (posix->moment (check-run-started run) 0)))
+  (field "duration" (milliseconds->seconds-string (check-run-duration run)))
+  (printf "\n[project]\n")
+  (let ([branch (check-run-branch run)])
+    (when branch
+      (field "branch" (toml-string branch))))
+  (let ([head (check-run-head run)])
+    (when head
+      (field "head" (toml-string head))))
+  (for ([result (in-list (check-run-results run))])
+    (define check (check-result-check result))
+    (define observation (check-result-observation result))
+    (define exit (check-observation-exit observation))
+    (define truncated (check-observation-truncated observation))
+    (printf "\n[[check]]\n")
+    (field "id" (toml-string (check-id check)))
+    (field "claim" (toml-string (check-claim check)))
+    (field "command" (toml-string (check-command check)))
+    (field "timeout" (milliseconds->seconds-string (check-timeout check)))
+    (when exit
+      (field "exit" (number->string exit)))
+    (field "duration" (milliseconds->seconds-string (check-observation-duration observation)))
+    (unless (zero? truncated)
+      (field "truncated" (number->string truncated)))
+    (field "output" (toml-string (check-observation-output observation)))))
+
+(: milliseconds->seconds-string (-> Natural String))
+(define (milliseconds->seconds-string milliseconds)
+  (define seconds (/ milliseconds 1000))
+  (number->string (if (integer? seconds) seconds (exact->inexact seconds))))
+
+;;; Running checks
+
+(: run-checks (-> Path (Listof check) (Listof check-result)))
 (define (run-checks project checks)
   (define bash (or (find-executable-path "bash")
                    (raise-handoff-error "bash not found on PATH")))
@@ -471,7 +657,7 @@
                     [current-subprocess-custodian-mode 'kill]
                     [subprocess-group-enabled #t]
                     [current-directory project])
-       (: start-check (-> check Path (Evtof result)))
+       (: start-check (-> check Path (Evtof check-result)))
        (define (start-check check output)
          (define started (current-inexact-monotonic-milliseconds))
          (define process
@@ -489,7 +675,7 @@
        ;; A check is finished when its shell exits or its timeout deadline
        ;; lapses. Either way we kill its process group, which also stops
        ;; anything that the shell left running in the background.
-       (: finish-check (-> check Subprocess Path Flonum result))
+       (: finish-check (-> check Subprocess Path Flonum check-result))
        (define (finish-check check process output started)
          (define duration
            (- (current-inexact-monotonic-milliseconds) started))
@@ -498,81 +684,245 @@
          (subprocess-wait process)
          (define truncated
            (max 0 (- (file-size output) capture-limit)))
-         (result check
-                 (if (eq? status 'running) #f status)
-                 (max 0.0 duration)
-                 (call-with-input-file output
-                   (λ ([in : Input-Port])
-                     (file-position in truncated)
-                     (port->string in)))
-                 truncated))
+         (check-result
+          check
+          (check-observation (if (eq? status 'running) #f status)
+                             (max 0 (exact-round duration))
+                             (call-with-input-file output
+                               (λ ([in : Input-Port])
+                                 (file-position in truncated)
+                                 (port->string in)))
+                             truncated)))
        (define events
-         (for/hasheq : (Immutable-HashTable check (Evtof result))
+         (for/hasheq : (Immutable-HashTable check (Evtof check-result))
                      ([check (in-list checks)]
                       [index (in-naturals)])
            (values check
                    (start-check check
                                 (build-path directory (number->string index))))))
-       (let loop : (Listof result)
-            ([pending : (Immutable-HashTable check (Evtof result)) events]
-             [finished : (Immutable-HashTable check result) (hasheq)])
+       (let loop : (Listof check-result)
+            ([pending : (Immutable-HashTable check (Evtof check-result)) events]
+             [finished : (Immutable-HashTable check check-result) (hasheq)])
          (cond
            [(hash-empty? pending)
-            (for/list : (Listof result) ([check (in-list checks)])
+            (for/list : (Listof check-result) ([check (in-list checks)])
               (hash-ref finished check))]
            [else
             (define result (apply sync (hash-values pending)))
-            (loop (hash-remove pending (result-check result))
-                  (hash-set finished (result-check result) result))]))))
+            (loop (hash-remove pending (check-result-check result))
+                  (hash-set finished (check-result-check result) result))]))))
    (thunk
      (custodian-shutdown-all custodian)
      (delete-directory/files directory))))
 
-(: print-results (-> (Listof result) Void))
+;;; Comparing checks
+
+;; The baseline is the highest-numbered log entry committed to the handoff
+;; repository, so a pending entry is never the baseline.
+(: find-baseline-log-entry (-> Path String Positive-Integer))
+(define (find-baseline-log-entry repository arc)
+  (define paths
+    (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
+          (string-append arc "/log/")))
+  (or (and paths (find-latest-log-entry arc (string-split paths "\u0000")))
+      (raise-handoff-error "~a has no committed log entry to compare against"
+                           arc)))
+
+(: read-baseline-checks (-> Path String Positive-Integer check-run))
+(define (read-baseline-checks repository arc log-entry-index)
+  (define path (format "~a/log/~a/~a" arc log-entry-index results-file))
+  (define text
+    (or (git* repository "show" (string-append "HEAD:" path))
+        (raise-handoff-error "log/~a has no committed ~a" log-entry-index results-file)))
+  (parse-check-run text (string->path path)))
+
+(: find-latest-log-entry (-> String (Listof String) (U Positive-Integer #f)))
+(define (find-latest-log-entry arc paths)
+  (define pattern
+    (pregexp (string-append "^" (regexp-quote arc) "/log/([1-9][0-9]*)$")))
+  (for/fold ([latest : (U Positive-Integer #f) #f])
+            ([path (in-list paths)])
+    (define match (regexp-match pattern path))
+    (define number (and match (string->number (assert (second match)))))
+    (cond
+      [(not (exact-positive-integer? number)) latest]
+      [latest (max latest number)]
+      [else number])))
+
+(struct check-added ([after : check-result]) #:transparent)
+(struct check-removed ([before : check-result]) #:transparent)
+(struct check-matched ([before : check-result]
+                       [after : check-result])
+  #:transparent)
+(define-type Check-Comparison (U check-added check-removed check-matched))
+
+(define-type Change
+  (U 'redefined 'unchanged 'contradicted 'unverified 'verified 'still-unverified))
+
+(: compare-check-results (-> (Listof check-result)
+                             (Listof check-result)
+                             (Listof Check-Comparison)))
+(define (compare-check-results before after)
+  (: find (-> check-result (Listof check-result) (U check-result #f)))
+  (define (find result results)
+    (define id (check-id (check-result-check result)))
+    (findf (λ ([other : check-result])
+             (equal? (check-id (check-result-check other)) id))
+           results))
+  (append
+   (for/list : (Listof Check-Comparison) ([result (in-list after)])
+     (define earlier (find result before))
+     (if earlier
+         (check-matched earlier result)
+         (check-added result)))
+   (for/list : (Listof Check-Comparison) ([result (in-list before)]
+                                          #:unless (find result after))
+     (check-removed result))))
+
+(: check-matched-change (-> check-matched Change))
+(define (check-matched-change comparison)
+  (match-define (check-matched before after) comparison)
+  (cond
+    [(not (check-definition-equivalent? (check-result-check before)
+                                        (check-result-check after)))
+     'redefined]
+    [else (outcome-change (check-result-outcome before)
+                          (check-result-outcome after))]))
+
+;; The claim is a description of the command, so rewording it does not
+;; redefine the check.
+(: check-definition-equivalent? (-> check check Boolean))
+(define (check-definition-equivalent? a b)
+  (and (equal? (check-command a) (check-command b))
+       (= (check-timeout a) (check-timeout b))))
+
+(: outcome-change (-> Outcome Outcome Change))
+(define (outcome-change before after)
+  (define (definite? [outcome : Outcome])
+    (and (memq outcome (list 'true 'false)) #t))
+  (cond
+    [(eq? before after) 'unchanged]
+    [(and (definite? before) (definite? after)) 'contradicted]
+    [(definite? before) 'unverified]
+    [(definite? after) 'verified]
+    [else 'still-unverified]))
+
+;;; Printing results
+
+(: print-results (-> (Listof check-result) Void))
 (define (print-results results)
   (for ([result (in-list results)])
-    (print-result result)
+    (print-result-header result)
+    (print-result-details result)
     (newline))
+  (print-summary results))
+
+(: print-comparisons (-> (Listof Check-Comparison) Positive-Integer String Integer Void))
+(define (print-comparisons comparisons log-entry-index host started)
+  (printf "compared against log/~a, recorded on ~a at ~a\n\n"
+          log-entry-index
+          host
+          (moment->iso8601 (posix->moment started 0)))
+  (for ([comparison (in-list comparisons)])
+    (match comparison
+      [(check-added after)
+       (print-result-header after)
+       (printf "change: new since log/~a\n" log-entry-index)
+       (print-result-details after)
+       (newline)]
+      [(check-matched before after)
+       (define change (check-matched-change comparison))
+       (define show-earlier-output?
+         (and (not (memq change (list 'unchanged 'redefined)))
+              (not (eq? (check-result-outcome before) 'true))))
+       (print-result-header after)
+       (case change
+         [(unchanged) (void)]
+         [(redefined)
+          (printf "change: redefined since log/~a, where it was ~a\n"
+                  log-entry-index
+                  (check-result-outcome before))]
+         [else
+          (printf "change: ~a, was ~a at log/~a\n"
+                  change
+                  (check-result-outcome before)
+                  log-entry-index)])
+       (print-result-details after)
+       (when show-earlier-output?
+         (print-output (format "output at log/~a" log-entry-index)
+                       (check-observation-output (check-result-observation before))))
+       (newline)]
+      [(check-removed _) (void)]))
+  (define removed
+    (for*/list : (Listof check) ([comparison (in-list comparisons)]
+                                 #:when (check-removed? comparison))
+      (check-result-check (check-removed-before comparison))))
+  (for ([check (in-list removed)])
+    (printf "removed since log/~a: ~a (~a)\n" log-entry-index (check-id check) (check-claim check)))
+  (unless (empty? removed)
+    (newline))
+  (print-summary
+   (filter-map (λ ([comparison : Check-Comparison]) : (U check-result #f)
+                 (match comparison
+                   [(check-added after) after]
+                   [(check-matched _ after) after]
+                   [(check-removed _) #f]))
+               comparisons)))
+
+(: print-result-header (-> check-result Void))
+(define (print-result-header result)
+  (define check (check-result-check result))
+  (printf "id: ~a\n" (check-id check))
+  (printf "claim: ~a\n" (check-claim check))
+  (printf "outcome: ~a\n" (check-result-outcome result)))
+
+(: print-result-details (-> check-result Void))
+(define (print-result-details result)
+  (define check (check-result-check result))
+  (define observation (check-result-observation result))
+  (define outcome (check-result-outcome result))
+  (case outcome
+    [(true) (void)]
+    [(timeout) (printf "timeout: ~as\n"
+                       (~r (/ (check-timeout check) 1000) #:precision '(= 1)))]
+    [else (printf "exit: ~a\n" (check-observation-exit observation))])
+  (printf "duration: ~as\n"
+          (~r (/ (check-observation-duration observation) 1000) #:precision '(= 1)))
+  (unless (eq? outcome 'true)
+    (unless (zero? (check-observation-truncated observation))
+      (printf "truncated: ~a bytes before the output were not kept\n"
+              (check-observation-truncated observation)))
+    (print-output "output" (check-observation-output observation))))
+
+(: print-output (-> String String Void))
+(define (print-output label output)
+  (define lines (string-split output "\n"))
+  (unless (empty? lines)
+    (define tail (take-right lines (min output-lines (length lines))))
+    (printf "~a~a:\n"
+            label
+            (if (< (length tail) (length lines))
+                (format " (last ~a of ~a lines)" (length tail) (length lines))
+                ""))
+    (for ([line (in-list tail)])
+      (printf "  ~a\n" line))))
+
+(: print-summary (-> (Listof check-result) Void))
+(define (print-summary results)
+  (define (count-with-outcome outcome)
+    (count (λ ([result : check-result])
+             (eq? (check-result-outcome result) outcome))
+           results))
   (define counts
     (for*/list : (Listof String)
-               ([outcome (in-list '(true false unknown timeout))]
-                [count (in-value (count (λ ([result : result])
-                                          (eq? (result-outcome result) outcome))
-                                        results))]
+               ([outcome (in-list (list 'true 'false 'unknown 'timeout))]
+                [count (in-value (count-with-outcome outcome))]
                 #:unless (zero? count))
       (format "~a ~a" count outcome)))
   (printf "summary: ~a\n"
           (if (empty? counts)
               "no checks"
               (string-join counts ", "))))
-
-(: print-result (-> result Void))
-(define (print-result result)
-  (define check (result-check result))
-  (define outcome (result-outcome result))
-  (printf "id: ~a\n" (check-id check))
-  (printf "claim: ~a\n" (check-claim check))
-  (printf "outcome: ~a\n" outcome)
-  (case outcome
-    [(true) (void)]
-    [(timeout) (printf "timeout: ~as\n"
-                       (~r (/ (check-timeout check) 1000) #:precision '(= 1)))]
-    [else (printf "exit: ~a\n" (result-exit result))])
-  (printf "duration: ~as\n"
-          (~r (/ (result-duration result) 1000) #:precision '(= 1)))
-  (unless (eq? outcome 'true)
-    (unless (zero? (result-truncated result))
-      (printf "truncated: ~a bytes before the output were not kept\n"
-              (result-truncated result)))
-    (define lines (string-split (result-output result) "\n"))
-    (unless (empty? lines)
-      (define tail (take-right lines (min output-lines (length lines))))
-      (printf "output~a:\n"
-              (if (< (length tail) (length lines))
-                  (format " (last ~a of ~a lines)" (length tail) (length lines))
-                  ""))
-      (for ([line (in-list tail)])
-        (printf "  ~a\n" line)))))
 
 ;;; TOML
 
@@ -590,12 +940,53 @@
   (unless (empty? unknown)
     (raise-handoff-error "~a has unknown fields ~a" context (names unknown))))
 
+(: expect-table (-> Any String Table))
+(define (expect-table value context)
+  (if (table? value)
+      value
+      (raise-handoff-error "~a must be a table" context)))
+
 (: expect-string (-> Table Symbol String String))
 (define (expect-string table key context)
   (define value (hash-ref table key #f))
   (if (and (string? value) (non-empty-string? (string-trim value)))
       value
       (raise-handoff-error "~a: ~a must be a nonempty string" context key)))
+
+(: expect-natural (-> Table Symbol String Natural))
+(define (expect-natural table key context)
+  (define value (hash-ref table key #f))
+  (if (exact-nonnegative-integer? value)
+      value
+      (raise-handoff-error "~a: ~a must be a nonnegative integer" context key)))
+
+(: expect-datetime (-> Table Symbol String Integer))
+(define (expect-datetime table key context)
+  (define value (hash-ref table key #f))
+  (if (moment? value)
+      (exact-floor (->posix value))
+      (raise-handoff-error "~a: ~a must be a datetime with an offset" context key)))
+
+;; We escape strings ourselves, since toml-lib's writer uses Racket's escapes
+;; and so output with an ANSI escape (\e) or a bell (\a) would not read back.
+(: toml-string (-> String String))
+(define (toml-string text)
+  (define multiline? (string-contains? text "\n"))
+  (define out (open-output-string))
+  (write-string (if multiline? "\"\"\"\n" "\"") out)
+  (for ([c (in-string text)])
+    (cond
+      [(char=? c #\\) (write-string "\\\\" out)]
+      [(char=? c #\") (write-string "\\\"" out)]
+      [(and multiline? (char=? c #\newline)) (write-char c out)]
+      [(char=? c #\tab) (write-char c out)]
+      [(or (char<? c #\space) (char=? c #\rubout))
+       (write-string "\\u" out)
+       (write-string (~r (char->integer c) #:base (list 'up 16) #:min-width 4 #:pad-string "0")
+                     out)]
+      [else (write-char c out)]))
+  (write-string (if multiline? "\"\"\"" "\"") out)
+  (get-output-string out))
 
 ;;; Git
 

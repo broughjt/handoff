@@ -33,7 +33,7 @@
                                     claim = 'c'
                                     command = 'd'"
                                    source))
-                (list (cons "b" 1500.0) (cons "a" 60000))))
+                (list (cons "b" 1500) (cons "a" 60000))))
 
 (test-case "a file without checks parses to the empty list"
   (check-equal? (parse-checks "" source) null))
@@ -84,6 +84,25 @@
                                    command = 'd'"
                                   source))))
 
+(test-case "a timeout is kept in whole milliseconds"
+  (check-equal? (map check-timeout
+                     (parse-checks "[[check]]
+                                    id = 'a'
+                                    claim = 'c'
+                                    command = 'd'
+                                    timeout = 0.0016"
+                                   source))
+                (list 2)))
+
+(test-case "a timeout that rounds to zero milliseconds is rejected"
+  (check-exn #rx"timeout must be a positive number of seconds"
+             (thunk (parse-checks "[[check]]
+                                   id = 'a'
+                                   claim = 'c'
+                                   command = 'd'
+                                   timeout = 0.0004"
+                                  source))))
+
 (test-case "invalid TOML is reported against its source"
   (check-exn (λ (error) (and (exn:fail:handoff? error)
                              (string-prefix? (exn-message error) "checks.toml: ")))
@@ -91,12 +110,14 @@
 
 (test-case "outcomes follow the exit code"
   (check-equal? (for/list : (Listof Symbol) ([exit (in-list (list 0 1 3 #f))])
-                  (result-outcome (result echo exit 0 "" 0)))
+                  (check-result-outcome
+                   (check-result echo (check-observation exit 0 "" 0))))
                 (list 'true 'false 'unknown 'timeout)))
 
 (test-case "a true result is printed without its output"
   (check-equal? (with-output-to-string
-                  (thunk (print-results (list (result echo 0 1240 "hi\n" 0)))))
+                  (thunk (print-results
+                          (list (check-result echo (check-observation 0 1240 "hi\n" 0))))))
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: true\n"
@@ -107,7 +128,8 @@
 (test-case "a failing result is printed with its exit code and the last 20 lines of output"
   (define output (string-join (for/list : (Listof String) ([n (in-range 1 23)]) (number->string n)) "\n"))
   (check-equal? (with-output-to-string
-                  (thunk (print-results (list (result echo 1 0 output 0)))))
+                  (thunk (print-results
+                          (list (check-result echo (check-observation 1 0 output 0))))))
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: false\n"
@@ -123,20 +145,23 @@
 (test-case "a timed-out result is printed with its timeout"
   (check-regexp-match #rx"outcome: timeout\ntimeout: 60.0s\n"
                       (with-output-to-string
-                        (thunk (print-results (list (result echo #f 60000 "" 0)))))))
+                        (thunk (print-results
+                                (list (check-result echo (check-observation #f 60000 "" 0))))))))
 
 (test-case "truncated output says how much was dropped"
   (check-regexp-match #rx"truncated: 7 bytes before the output were not kept\noutput:\n  tail\n"
                       (with-output-to-string
-                        (thunk (print-results (list (result echo 1 0 "tail\n" 7)))))))
+                        (thunk (print-results
+                                (list (check-result echo (check-observation 1 0 "tail\n" 7))))))))
 
 (test-case "the summary counts outcomes in a fixed order"
   (check-regexp-match #rx"summary: 1 true, 2 false, 1 timeout\n$"
                       (with-output-to-string
-                        (thunk (print-results (list (result echo #f 0 "" 0)
-                                                    (result echo 1 0 "" 0)
-                                                    (result echo 0 0 "" 0)
-                                                    (result echo 1 0 "" 0)))))))
+                        (thunk (print-results
+                                (list (check-result echo (check-observation #f 0 "" 0))
+                                      (check-result echo (check-observation 1 0 "" 0))
+                                      (check-result echo (check-observation 0 0 "" 0))
+                                      (check-result echo (check-observation 1 0 "" 0))))))))
 
 (test-case "a run without checks says \"no checks\" in the summary"
   (check-equal? (with-output-to-string (thunk (print-results null)))
