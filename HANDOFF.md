@@ -138,6 +138,10 @@ It is okay for checks to return false, and this does not necessarily indicate a 
 
 The `handoff check` subcommand runs the checks and prints the results. The `handoff update --begin` subcommand runs the checks and records the results in the new pending log entry (see *Updates*).
 
+TODO: Make this shorter, and probably incorporate or replace existing prose. Do this after all the script changes are made and we make a systematic pass over all of HANDOFF.md
+
+The `handoff start` and `handoff check --compare` subcommands compare the results against those of the last handoff. A check that was added or removed since then is labeled `new` or `removed`, and a check whose `command` or `timeout` changed is labeled `redefined`, since its outcomes are no longer comparable; changing only the `claim` does not redefine a check. A change in the outcome of any other check is labeled by what the two outcomes say about the claim. True and false decide the claim, and unknown and timeout leave it undecided. The change is `contradicted` when the outcome moves between true and false, `unverified` when it moves from decided to undecided, `verified` when it moves from undecided to decided, and `still-unverified` when it moves between unknown and timeout.
+
 A new arc's `checks.toml`, as written by `handoff new`, holds a placeholder check that the linter rejects, so an arc needs at least one real check before its first update.
 
 ## Updates
