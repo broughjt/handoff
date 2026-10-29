@@ -10,7 +10,7 @@
 
 (define source (string->path "checks.toml"))
 
-(define echo (check "echo" "it echoes" "echo hi" 60000))
+(define echo (check "echo" "it echoes" "echo hi" 60))
 
 (test-case "a check's timeout defaults to 60 seconds"
   (check-equal? (parse-checks "[[check]]
@@ -33,7 +33,7 @@
                                     claim = 'c'
                                     command = 'd'"
                                    source))
-                (list (cons "b" 1500) (cons "a" 60000))))
+                (list (cons "b" 3/2) (cons "a" 60))))
 
 (test-case "a file without checks parses to the empty list"
   (check-equal? (parse-checks "" source) null))
@@ -92,7 +92,7 @@
                                     command = 'd'
                                     timeout = 0.0016"
                                    source))
-                (list 2)))
+                (list 1/500)))
 
 (test-case "a timeout that rounds to zero milliseconds is rejected"
   (check-exn #rx"timeout must be a positive number of seconds"
@@ -117,7 +117,7 @@
 (test-case "a true result is printed without its output"
   (check-equal? (with-output-to-string
                   (thunk (print-results
-                          (list (check-result echo (check-observation 0 1240 "hi\n" 0))))))
+                          (list (check-result echo (check-observation 0 31/25 "hi\n" 0))))))
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: true\n"
@@ -146,7 +146,7 @@
   (check-regexp-match #rx"outcome: timeout\ntimeout: 60.0s\n"
                       (with-output-to-string
                         (thunk (print-results
-                                (list (check-result echo (check-observation #f 60000 "" 0))))))))
+                                (list (check-result echo (check-observation #f 60 "" 0))))))))
 
 (test-case "truncated output says how much was dropped"
   (check-regexp-match #rx"truncated: 7 bytes before the output were not kept\noutput:\n  tail\n"

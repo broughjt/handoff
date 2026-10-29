@@ -26,8 +26,6 @@
 
 (require/typed gregor
   [#:opaque Moment moment?]
-  [->posix (-> Moment Real)]
-  [posix->moment (-> Real Integer Moment)]
   [moment->iso8601 (-> Moment String)])
 
 (module signal racket/base
@@ -41,7 +39,8 @@
 (require/typed (submod "." signal)
   [kill-group (-> Integer Void)])
 
-(provide (struct-out check)
+(provide Moment
+         (struct-out check)
          (struct-out check-observation)
          (struct-out check-result)
          (struct-out check-run)
@@ -422,35 +421,31 @@
 
 (define checks-file "checks.toml")
 (define results-file "results.toml")
-(define default-timeout : Positive-Integer (* 60 1000)) ;; 60 s
+(define default-timeout : Positive-Exact-Rational 60)
 (define capture-limit : Natural (* 1024 1024)) ;; 1 MiB
 (define output-lines 20)
 
-;; We store `timeout` in milliseconds, which is the unit of the monotonic
-;; clock. However, the checks.toml file specifies it in seconds.
 (struct check ([id : String]
                [claim : String]
                [command : String]
-               [timeout : Positive-Integer])
+               [timeout : Positive-Exact-Rational])
   #:transparent)
 
 (struct check-result ([check : check]
                       [observation : check-observation])
   #:transparent)
 
-;; `exit` is #f when the check timed out, `duration` is in milliseconds, and
-;; `truncated` counts the bytes dropped from the start of `output` to keep it
-;; under `capture-limit`.
+;; `exit` is #f when the check timed out, and `truncated` counts the bytes
+;; dropped from the start of `output` to keep it under `capture-limit`.
 (struct check-observation ([exit : (U Integer #f)]
-                           [duration : Natural]
+                           [duration : Nonnegative-Exact-Rational]
                            [output : String]
                            [truncated : Natural])
   #:transparent)
 
-;; `started` is in seconds since the epoch and `duration` is in milliseconds.
 (struct check-run ([host : String]
-                   [started : Integer]
-                   [duration : Natural]
+                   [started : Moment]
+                   [duration : Nonnegative-Exact-Rational]
                    [branch : (U String #f)]
                    [head : (U String #f)]
                    [results : (Listof check-result)])
@@ -469,6 +464,14 @@
 (: check-result-outcome (-> check-result Outcome))
 (define check-result-outcome
   (compose1 (compose1 exit-outcome check-observation-exit) check-result-observation))
+
+(: milliseconds->seconds (-> Nonnegative-Real Nonnegative-Exact-Rational))
+(define (milliseconds->seconds milliseconds)
+  (/ (exact-round milliseconds) 1000))
+
+(: seconds->milliseconds (-> Nonnegative-Real Nonnegative-Real))
+(define (seconds->milliseconds seconds)
+  (* 1000 seconds))
 
 ;;; Reading and writing checks.toml and results.toml
 
@@ -580,25 +583,22 @@
                          (expect-natural table 'truncated context)
                          0)))
 
-(: expect-timeout (-> Table String Positive-Integer))
+(: expect-timeout (-> Table String Positive-Exact-Rational))
 (define (expect-timeout table context)
-  (define milliseconds
+  (define seconds
     (if (hash-has-key? table 'timeout)
         (expect-seconds table 'timeout context)
         default-timeout))
-  (if (positive? milliseconds)
-      milliseconds
+  (if (positive? seconds)
+      seconds
       (raise-handoff-error "~a: timeout must be a positive number of seconds"
                            context)))
 
-;; Seconds are read into whole milliseconds.
-(: expect-seconds (-> Table Symbol String Natural))
+(: expect-seconds (-> Table Symbol String Nonnegative-Exact-Rational))
 (define (expect-seconds table key context)
   (define seconds (hash-ref table key #f))
-  (define milliseconds
-    (and (rational? seconds) (exact-round (* 1000 seconds))))
-  (if (exact-nonnegative-integer? milliseconds)
-      milliseconds
+  (if (and (rational? seconds) (>= seconds 0))
+      (milliseconds->seconds (seconds->milliseconds seconds))
       (raise-handoff-error "~a: ~a must be a nonnegative number of seconds"
                            context
                            key)))
@@ -609,8 +609,8 @@
     (printf "~a = ~a\n" key value))
   (printf "[run]\n")
   (field "host" (toml-string (check-run-host run)))
-  (field "started" (moment->iso8601 (posix->moment (check-run-started run) 0)))
-  (field "duration" (milliseconds->seconds-string (check-run-duration run)))
+  (field "started" (moment->iso8601 (check-run-started run)))
+  (field "duration" (toml-number (check-run-duration run)))
   (printf "\n[project]\n")
   (let ([branch (check-run-branch run)])
     (when branch
@@ -627,18 +627,13 @@
     (field "id" (toml-string (check-id check)))
     (field "claim" (toml-string (check-claim check)))
     (field "command" (toml-string (check-command check)))
-    (field "timeout" (milliseconds->seconds-string (check-timeout check)))
+    (field "timeout" (toml-number (check-timeout check)))
     (when exit
       (field "exit" (number->string exit)))
-    (field "duration" (milliseconds->seconds-string (check-observation-duration observation)))
+    (field "duration" (toml-number (check-observation-duration observation)))
     (unless (zero? truncated)
       (field "truncated" (number->string truncated)))
     (field "output" (toml-string (check-observation-output observation)))))
-
-(: milliseconds->seconds-string (-> Natural String))
-(define (milliseconds->seconds-string milliseconds)
-  (define seconds (/ milliseconds 1000))
-  (number->string (if (integer? seconds) seconds (exact->inexact seconds))))
 
 ;;; Running checks
 
@@ -667,7 +662,7 @@
                  (subprocess out #f out bash "-c" (check-command check)))
                (close-output-port (assert stdin))
                process)))
-         (define deadline (+ started (check-timeout check)))
+         (define deadline (+ started (seconds->milliseconds (check-timeout check))))
          (handle-evt
           (choice-evt process (monotonic-alarm-evt deadline #t))
           ;; `thunk` and `thunk*` cause type checking problems here
@@ -678,7 +673,8 @@
        (: finish-check (-> check Subprocess Path Flonum check-result))
        (define (finish-check check process output started)
          (define duration
-           (- (current-inexact-monotonic-milliseconds) started))
+           (milliseconds->seconds
+            (max 0.0 (- (current-inexact-monotonic-milliseconds) started))))
          (define status (subprocess-status process))
          (kill-group (subprocess-pid process))
          (subprocess-wait process)
@@ -687,7 +683,7 @@
          (check-result
           check
           (check-observation (if (eq? status 'running) #f status)
-                             (max 0 (exact-round duration))
+                             duration
                              (call-with-input-file output
                                (λ ([in : Input-Port])
                                  (file-position in truncated)
@@ -817,12 +813,12 @@
     (newline))
   (print-summary results))
 
-(: print-comparisons (-> (Listof Check-Comparison) Positive-Integer String Integer Void))
+(: print-comparisons (-> (Listof Check-Comparison) Positive-Integer String Moment Void))
 (define (print-comparisons comparisons log-entry-index host started)
   (printf "compared against log/~a, recorded on ~a at ~a\n\n"
           log-entry-index
           host
-          (moment->iso8601 (posix->moment started 0)))
+          (moment->iso8601 started))
   (for ([comparison (in-list comparisons)])
     (match comparison
       [(check-added after)
@@ -883,16 +879,18 @@
   (define outcome (check-result-outcome result))
   (case outcome
     [(true) (void)]
-    [(timeout) (printf "timeout: ~as\n"
-                       (~r (/ (check-timeout check) 1000) #:precision '(= 1)))]
+    [(timeout) (printf "timeout: ~as\n" (format-seconds (check-timeout check)))]
     [else (printf "exit: ~a\n" (check-observation-exit observation))])
-  (printf "duration: ~as\n"
-          (~r (/ (check-observation-duration observation) 1000) #:precision '(= 1)))
+  (printf "duration: ~as\n" (format-seconds (check-observation-duration observation)))
   (unless (eq? outcome 'true)
     (unless (zero? (check-observation-truncated observation))
       (printf "truncated: ~a bytes before the output were not kept\n"
               (check-observation-truncated observation)))
     (print-output "output" (check-observation-output observation))))
+
+(: format-seconds (-> Nonnegative-Exact-Rational String))
+(define (format-seconds seconds)
+  (~r seconds #:precision '(= 1)))
 
 (: print-output (-> String String Void))
 (define (print-output label output)
@@ -960,11 +958,11 @@
       value
       (raise-handoff-error "~a: ~a must be a nonnegative integer" context key)))
 
-(: expect-datetime (-> Table Symbol String Integer))
+(: expect-datetime (-> Table Symbol String Moment))
 (define (expect-datetime table key context)
   (define value (hash-ref table key #f))
   (if (moment? value)
-      (exact-floor (->posix value))
+      value
       (raise-handoff-error "~a: ~a must be a datetime with an offset" context key)))
 
 ;; We escape strings ourselves, since toml-lib's writer uses Racket's escapes
@@ -987,6 +985,10 @@
       [else (write-char c out)]))
   (write-string (if multiline? "\"\"\"" "\"") out)
   (get-output-string out))
+
+(: toml-number (-> Exact-Rational String))
+(define (toml-number number)
+  (number->string (if (integer? number) number (exact->inexact number))))
 
 ;;; Git
 

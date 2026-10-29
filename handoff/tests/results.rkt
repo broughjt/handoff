@@ -7,17 +7,22 @@
          (except-in typed/rackunit check)
          "../main.rkt")
 
+(require/typed gregor
+  [iso8601->moment (-> String Moment)])
+
 (define source (string->path "results.toml"))
 
-(define echo (check "echo" "it echoes" "echo hi" 60000))
+(define echo (check "echo" "it echoes" "echo hi" 60))
+
+(define started (iso8601->moment "2026-10-28T23:55:41Z"))
 
 (test-case "a run is written with durations and timeouts in seconds"
   (define run
-    (check-run "murph" 1793231741 2500 "main" "abc123"
-               (list (check-result (check "slow" "it is slow" "sleep 9" 1500)
-                                   (check-observation #f 1502 "" 0))
+    (check-run "murph" started 5/2 "main" "abc123"
+               (list (check-result (check "slow" "it is slow" "sleep 9" 3/2)
+                                   (check-observation #f 751/500 "" 0))
                      (check-result echo
-                                   (check-observation 0 12 "hi\n" 0)))))
+                                   (check-observation 0 3/250 "hi\n" 0)))))
   (check-equal? (with-output-to-string (thunk (write-check-run run)))
                 (string-append "[run]\n"
                                "host = \"murph\"\n"
@@ -54,18 +59,18 @@
                    "ünïcödé 🙂\n"
                    "ends with a quote\""))
   (define run
-    (check-run "murph" 1793231741 2500 "main" "abc123"
-               (list (check-result (check "c" "claim \"quoted\"" "printf '\\a'" 1)
-                                   (check-observation 3 7 output 1024)))))
-  (check-equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
-                                 source)
-                run))
+    (check-run "murph" started 5/2 "main" "abc123"
+               (list (check-result (check "c" "claim \"quoted\"" "printf '\\a'" 1/1000)
+                                   (check-observation 3 7/1000 output 1024)))))
+  (check-true (equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
+                                       source)
+                      run)))
 
 (test-case "a run on a detached head without commits reads back as written"
-  (define run (check-run "murph" 0 0 #f #f null))
-  (check-equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
-                                 source)
-                run))
+  (define run (check-run "murph" started 0 #f #f null))
+  (check-true (equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
+                                       source)
+                      run)))
 
 (test-case "a check's outcome is not a field of results.toml"
   (check-exn #rx"results.toml: check\\[0\\] has unknown fields outcome"

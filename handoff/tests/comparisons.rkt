@@ -6,9 +6,12 @@
          (except-in typed/rackunit check)
          "../main.rkt")
 
+(require/typed gregor
+  [iso8601->moment (-> String Moment)])
+
 (: result (-> String String (U Integer #f) check-result))
 (define (result id command exit)
-  (check-result (check id "claim" command 60000)
+  (check-result (check id "claim" command 60)
                 (check-observation exit 0 "" 0)))
 
 (test-case "comparisons follow the current order, then the removed checks"
@@ -26,13 +29,13 @@
                       (check-removed (result "removed" "true" 0)))))
 
 (test-case "rewording a claim does not redefine a check, but changing its timeout does"
-  (define before (check "a" "claim" "true" 60000))
+  (define before (check "a" "claim" "true" 60))
   (define (change [after : check])
     (check-matched-change
      (check-matched (check-result before (check-observation 0 0 "" 0))
                     (check-result after (check-observation 0 0 "" 0)))))
-  (check-equal? (change (check "a" "reworded" "true" 60000)) 'unchanged)
-  (check-equal? (change (check "a" "claim" "true" 120000)) 'redefined))
+  (check-equal? (change (check "a" "reworded" "true" 60)) 'unchanged)
+  (check-equal? (change (check "a" "claim" "true" 120)) 'redefined))
 
 (test-case "a change of outcome is classified by what each outcome says about the claim"
   (define exits (list 0 1 3 #f))
@@ -60,21 +63,21 @@
 
 (test-case "a comparison shows changes, the baseline's output and removed checks"
   (define baseline
-    (list (check-result (check "flips" "it holds" "test -e x" 60000)
+    (list (check-result (check "flips" "it holds" "test -e x" 60)
                         (check-observation 1 0 "missing\n" 0))
-          (check-result (check "gone" "it is gone" "true" 60000)
+          (check-result (check "gone" "it is gone" "true" 60)
                         (check-observation 0 0 "" 0))))
   (define current
-    (list (check-result (check "flips" "it holds" "test -e x" 60000)
-                        (check-observation 0 1200 "" 0))
-          (check-result (check "fresh" "it is new" "false" 60000)
+    (list (check-result (check "flips" "it holds" "test -e x" 60)
+                        (check-observation 0 6/5 "" 0))
+          (check-result (check "fresh" "it is new" "false" 60)
                         (check-observation 1 0 "no\n" 0))))
   (check-equal? (with-output-to-string
                   (thunk (print-comparisons
                           (compare-check-results baseline current)
                           7
                           "murph"
-                          1793231741)))
+                          (iso8601->moment "2026-10-28T23:55:41Z"))))
                 (string-append "compared against log/7, recorded on murph at 2026-10-28T23:55:41Z\n"
                                "\n"
                                "id: flips\n"
