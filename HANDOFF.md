@@ -263,7 +263,7 @@ Commands shown with `[arc]` take the arc as an optional last argument, which may
 |---|---|
 | `handoff list [--archived]` | list active arcs, or closed ones from their `archive/<arc>` tags |
 | `handoff start [arc]` | produce a starting report, including the arc's files inlined, project and handoff repository status, and the checks compared against the last handoff. |
-| `handoff check [arc]` | run the checks and print the results |
+| `handoff check [--compare] [arc]` | run the checks and print the results (comparing against the last handoff when `--compare` is given) |
 | `handoff lint [arc]` | validate the layout, `start.toml`, references, `checks.toml` and log entries |
 | `handoff update --begin [arc]` | run the checks, record their results in a pending log entry, and print the path of its `entry.md` |
 | `handoff update --commit [arc]` | validate and commit the pending log entry, the arc, and anything staged |
