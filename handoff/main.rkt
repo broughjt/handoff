@@ -154,8 +154,12 @@
   'success)
 
 (: handle-start (-> Path String Status))
+;; TODO: Call `name` `arc-name` here and elsewhere
 (define (handle-start handoff-repository name)
   (define project-repository (find-project-repository handoff-repository))
+  ;; TODO: Is there a way to do something similar to Rust's `if let Some(...)`
+  ;; where we call `parsed` `result` and then bind the name `arc` if it is an
+  ;; struct `arc` and `errors` otherwise?
   (define parsed (read-arc handoff-repository project-repository name))
   (cond
     [(arc? parsed)

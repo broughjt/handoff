@@ -62,13 +62,16 @@
    #:usage-help
    "Commands:"
    "  list      list handoff arcs"
+   ;; TODO: Improve wording. How?
    "  start     get a brief for starting work on a handoff arc"
    "  check     run the commands in checks.toml and report their results"
-   "  lint      validate expected structure of a handoff arc"
+   "  lint      validate the expected structure of a handoff arc"
+   ;; TODO: Should we remove past the colon, since the helps for the update
+   ;; subcommand describes them?
    "  update    record a log entry: --begin runs the checks and records them, --commit commits"
-   "  new       create an arc's files, copying its workflow"
+   "  new       create an arc"
    "  workflow  list, install, or fork reusable workflows"
-   "  guide     print the path of HANDOFF.md, which documents concepts shared by the handoff skills"
+   "  guide     print the usage guide"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
@@ -169,8 +172,8 @@
    #:argv arguments
    #:usage-help
    "Commands:"
-   ;; TODO: What is a "reusable" workflow as opposed to a "workflow file"?
-   ;; TODO: Why not:
+   ;; TODO: (later, when we do the workflow commands) What is a "reusable" workflow as opposed to a "workflow file"?
+   ;; TODO: (later, ditto) Why not:
    ;; list workflows
    ;; copy a workflow verbatim to the root of the handoff repository
    ;; copy a workflow to the root of the handoff repository so it can be modified
