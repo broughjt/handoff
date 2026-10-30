@@ -100,8 +100,9 @@
        [(invocation option subcommand)
         (when (and option (not (git-repository? option)))
           (raise-handoff-error "~a is not a git repository" option))
-        (define repository (or option
-                               (find-handoff-repository (current-directory))))
+        (define repository
+          (simple-form-path
+           (or option (find-handoff-repository (current-directory)))))
         (match subcommand
           [(list-subcommand archived?) (handle-list repository archived?)]
           [(start-subcommand arc)
@@ -350,8 +351,7 @@
   (if (empty? diagnostics) 'success 'failure))
 
 (: handle-start (-> Path String Status))
-(define (handle-start repository* name)
-  (define repository (simple-form-path repository*))
+(define (handle-start repository name)
   (define project-path (find-project-repository repository))
   (define parsed (read-arc repository project-path name))
   (cond
