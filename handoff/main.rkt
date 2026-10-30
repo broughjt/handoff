@@ -439,14 +439,7 @@
 (: parse-check-tables (All (A) (-> Table String (-> Table String A) (-> A String)
                                    (Listof A))))
 (define (parse-check-tables table source parse id)
-  (define entries (hash-ref table 'check (const null)))
-  (unless (list? entries)
-    (raise-handoff-error "~a: check must be an array of tables" source))
-  (define parsed
-    (for/list : (Listof A) ([entry (in-list entries)]
-                            [index (in-naturals)])
-      (define context (format "~a: check[~a]" source index))
-      (parse (expect-table entry context) context)))
+  (define parsed (expect-tables table 'check source parse))
   (define duplicate ((inst check-duplicates A String) parsed #:key id))
   (when duplicate
     (raise-handoff-error "~a: check ~a appears more than once"
@@ -1012,19 +1005,15 @@
   (define source-string (path->string source))
   (define table (read-toml text source-string))
   (expect-fields table (list 'next 'workflow 'read-first) null source-string)
-  (define entries (hash-ref table 'read-first))
-  (unless (list? entries)
-    (raise-handoff-error "~a: read-first must be an array of tables"
-                         source-string))
   (start (expect-string table 'next source-string)
          (expect-scope-path table 'workflow source-string)
-         (for/list : (Listof read-first) ([entry (in-list entries)]
-                                          [index (in-naturals)])
-           (define context (format "~a: read-first[~a]" source-string index))
-           (define read (expect-table entry context))
-           (expect-fields read (list 'path 'reason) null context)
-           (read-first (expect-scope-path read 'path context)
-                       (expect-string read 'reason context)))))
+         (expect-tables table
+                        'read-first
+                        source-string
+                        (λ ([read : Table] [context : String])
+                          (expect-fields read (list 'path 'reason) null context)
+                          (read-first (expect-scope-path read 'path context)
+                                      (expect-string read 'reason context))))))
 
 (: expect-scope-path (-> Table Symbol String scope-path))
 (define (expect-scope-path table key context)

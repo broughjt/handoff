@@ -2,6 +2,7 @@
 ;; Reading and writing TOML.
 
 (require racket/format
+         racket/function
          racket/list
          racket/string
          "error.rkt")
@@ -19,6 +20,7 @@
          read-toml
          expect-fields
          expect-table
+         expect-tables
          expect-string
          expect-natural
          expect-datetime
@@ -52,6 +54,17 @@
   (if (table? value)
       value
       (raise-handoff-error "~a must be a table" context)))
+
+(: expect-tables (All (A) (-> Table Symbol String (-> Table String A)
+                              (Listof A))))
+(define (expect-tables table key context parse)
+  (define entries (hash-ref table key (const null)))
+  (unless (list? entries)
+    (raise-handoff-error "~a: ~a must be an array of tables" context key))
+  (for/list : (Listof A) ([entry (in-list entries)]
+                          [index (in-naturals)])
+    (define entry-context (format "~a: ~a[~a]" context key index))
+    (parse (expect-table entry entry-context) entry-context)))
 
 (: expect-string (-> Table Symbol String String))
 (define (expect-string table key context)
