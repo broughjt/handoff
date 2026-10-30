@@ -23,21 +23,18 @@
 (define (with-history history)
   (struct-copy project here [history history]))
 
-(: repository-output (-> (Listof String) arc-files (Listof String) String))
-(define (repository-output diagnostics files dirty)
+(: repository-output (-> (Listof String) arc (Listof String) String))
+(define (repository-output diagnostics parsed dirty)
   (with-output-to-string
-    (thunk (print-handoff-repository diagnostics files (parse-arc files) dirty))))
+    (thunk (print-handoff-repository diagnostics parsed dirty))))
 
-(: with-pending (-> log-entry-files arc-files))
+(: with-pending (-> log-entry arc))
 (define (with-pending entry)
-  (struct-copy arc-files clean
-               [log (list (log-entry-files "1" #t "# First\n" results) entry)]
-               [committed-log (list "1")]
-               [baseline (baseline-files 1 results)]))
+  (struct-copy arc clean [log (list (log-entry 1 #t "# First\n" run) entry)]))
 
-(: documents-output (-> arc-files String))
-(define (documents-output files)
-  (with-output-to-string (thunk (print-documents files (parse-arc files)))))
+(: documents-output (-> arc String))
+(define (documents-output parsed)
+  (with-output-to-string (thunk (print-documents parsed))))
 
 (test-case "the project section says when nothing was committed since the baseline"
   (check-equal? (project-output here (cons 1 recorded))
@@ -101,7 +98,7 @@
                                "uncommitted: none\n")))
 
 (test-case "the handoff repository section describes a pending entry's results and entry.md"
-  (check-equal? (repository-output null (with-pending (log-entry-files "2" #t "# Second\n" results)) null)
+  (check-equal? (repository-output null (with-pending (log-entry 2 #f "# Second\n" run)) null)
                 (string-append "lint: no errors\n"
                                "pending log entry: log/2 was begun but not committed, so it is not the baseline\n"
                                "  results: recorded on murph at 2026-10-29T18:00:00Z\n"
@@ -110,11 +107,11 @@
 
 (test-case "the handoff repository section says when a pending entry's results do not parse"
   (check-regexp-match #rx"\n  results: does not parse; see lint\n"
-                      (repository-output null (with-pending (log-entry-files "2" #t "# Second\n" "[run]")) null)))
+                      (repository-output null (with-pending (log-entry 2 #f "# Second\n" "a/log/2/results.toml is missing project")) null)))
 
 (test-case "the handoff repository section says when a pending entry has neither results nor entry.md"
   (check-regexp-match #rx"\n  results: none\n  entry.md: not written\n"
-                      (repository-output null (with-pending (log-entry-files "2" #t #f #f)) null)))
+                      (repository-output null (with-pending (log-entry 2 #f #f #f)) null)))
 
 (test-case "the handoff repository section lists uncommitted changes"
   (check-equal? (repository-output null clean (list " M a/tasks.md" "?? a/plan.md"))
@@ -126,22 +123,21 @@
 
 (test-case "other documents leaves out the workflow and verbatim copies"
   (check-equal? (documents-output
-                 (struct-copy arc-files clean
-                              [documents (append (arc-files-documents clean)
+                 (struct-copy arc clean
+                              [other-documents (append (arc-other-documents clean)
                                                  (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
                                                              "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n\nSpike.\n")))]))
                 (string-append "- arc:notes/\n"
                                "- handoff:topic.md: What this covers.\n")))
 
 (test-case "other documents says when there are none"
-  (check-equal? (documents-output (struct-copy arc-files clean [documents null])) "nothing\n"))
+  (check-equal? (documents-output (struct-copy arc clean [other-documents null])) "nothing\n"))
 
 (test-case "the report gives the inlined files, then the other documents, the project, the handoff repository and the checks"
   (define report
     (with-output-to-string
       (thunk (print-start (string->path "/p/.scratch/handoff")
                           clean
-                          (parse-arc clean)
                           (cons 2 recorded)
                           null
                           here

@@ -4,26 +4,23 @@
 (require racket/function
          racket/list
          (except-in typed/rackunit check)
-         "../error.rkt"
          "../main.rkt"
          "fixtures.rkt")
 
 (define source (string->path "a/start.toml"))
 
-(: parse-lint (-> arc-files (Listof String)))
-(define (parse-lint files)
-  (lint files (parse-arc files)))
-
 (: omit (-> String (Pairof String Natural)))
 (define (omit text)
   (call-with-values (thunk (omit-finished-tasks text)) (inst cons String Natural)))
 
-(: sections (-> arc-files (U Positive-Integer #f) (Listof (Pairof String String))))
-(define (sections files entry)
-  (inlined-sections files (parse-arc files) entry))
+(: sections (-> arc (U Positive-Integer #f) (Listof (Pairof String String))))
+(define (sections parsed number)
+  (inlined-sections parsed
+                    (findf (λ ([entry : log-entry]) (eqv? (log-entry-number entry) number))
+                           (arc-log parsed))))
 
 ;; `clean` with tasks.md padded so that the report inlines `total` bytes.
-(: padded (-> Natural arc-files))
+(: padded (-> Natural arc))
 (define (padded total)
   (define others
     (for/sum : Integer ([section (in-list (sections clean 2))]
@@ -88,114 +85,90 @@
   (check-equal? (map parse-log-entry-name (list "1" "10" "01" "0" "x"))
                 (list 1 10 #f #f #f)))
 
-(test-case "the latest log entry is the highest entry number, ignoring other names"
-  (check-equal? (latest-log-entry (list "2" "10" "9" "notes.md" "011")) 10))
-
-(test-case "a log without entry numbers has no latest entry"
-  (check-false (latest-log-entry (list "notes.md"))))
-
-(test-case "an arc parses with its log entries in ascending order"
-  (define parsed
-    (parse-arc (struct-copy arc-files clean
-                            [log (list (log-entry-files "10" #t "# Tenth\n" results)
-                                       (log-entry-files "9" #t "# Ninth\n" results))]
-                            [committed-log (list "9" "10")])))
-  (check-equal? (arc-log-entries parsed) (list 9 10))
-  (check-false (arc-pending parsed)))
-
 (test-case "the highest log entry is pending when it is not committed"
-  (check-equal? (arc-pending (parse-arc (struct-copy arc-files clean [committed-log (list "1")])))
-                2))
+  (check-equal? (find-pending-log-entry (list (log-entry 1 #t "# First\n" run) (log-entry 2 #f #f #f)))
+                (log-entry 2 #f #f #f)))
 
-(test-case "an arc missing a state file does not parse"
-  (check-exn #rx"a/review.md: expected a regular file"
-             (thunk (parse-arc (with-text clean "review.md" #f)))))
+(test-case "no log entry is pending when the highest is committed"
+  (check-false (find-pending-log-entry (arc-log clean))))
 
-(test-case "an arc with two broken files raises with both messages"
-  (check-equal? (with-handlers ([exn:fail:handoff:arc? exn:fail:handoff:arc-messages])
-                  (parse-arc (with-text (with-text clean "start.toml" #f) "review.md" #f))
-                  null)
-                (list "a/start.toml: expected a regular file"
-                      "a/review.md: expected a regular file")))
+(test-case "the baseline is the highest committed log entry"
+  (check-true (equal? (find-baseline "a" (list (log-entry 1 #t "# First\n" run) (log-entry 2 #f #f #f)))
+                      (cons 1 run))))
+
+(test-case "a baseline whose results.toml does not parse is rejected"
+  (check-exn #rx"^a/log/1/results.toml is missing project$"
+             (thunk (find-baseline "a" (list (log-entry 1 #t "# First\n" "a/log/1/results.toml is missing project"))))))
+
+(test-case "a baseline without results.toml is rejected"
+  (check-exn #rx"^a/log/1/results.toml: expected a regular file$"
+             (thunk (find-baseline "a" (list (log-entry 1 #t "# First\n" #f))))))
 
 (test-case "a clean arc has no lint errors"
-  (check-equal? (parse-lint clean) null))
+  (check-equal? (lint clean) null))
 
 (test-case "lint reports a reference that is not a regular file"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [references (list (cons (scope-path 'arc (string->path "gone.md")) #f))]))
+  (check-equal? (lint (struct-copy arc clean [missing-references (list (scope-path 'arc (string->path "gone.md")))]))
                 (list "a/start.toml: arc:gone.md is not a regular file")))
 
 (test-case "lint reports the placeholder check"
-  (check-equal? (parse-lint (with-text clean
-                                       "checks.toml"
-                                       "[[check]]
-                                        id = 'replace-me'
-                                        claim = 'c'
-                                        command = 'exit 3'"))
+  (check-equal? (lint (struct-copy arc clean [checks (list (check "replace-me" "c" "exit 3" 60))]))
                 (list "a/checks.toml: check replace-me is the placeholder from handoff new; replace it with the arc's checks")))
 
 (test-case "lint reports a document whose summary is a list"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [documents (list (cons (scope-path 'arc (string->path "plan.md"))
-                                                                "# Plan\n\n- a list\n"))]))
+  (check-equal? (lint (struct-copy arc clean
+                                   [other-documents (list (cons (scope-path 'arc (string->path "plan.md"))
+                                                          "# Plan\n\n- a list\n"))]))
                 (list "a/plan.md: expected a paragraph of prose after the opening headings, not a list, code block, table, or HTML")))
 
 (test-case "lint does not require a summary of a verbatim workflow copy"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [documents (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
-                                                                "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n"))]))
+  (check-equal? (lint (struct-copy arc clean
+                                   [other-documents (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
+                                                          "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n"))]))
                 null))
 
 (test-case "lint reports a name in the log that is not an entry number"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "notes.md" #f #f #f))]
-                                         [committed-log null]))
+  (check-equal? (lint (struct-copy arc clean [invalid-log-entries (list "notes.md")]))
                 (list "a/log/notes.md: expected a log entry number, a positive integer without leading zeros")))
 
+(test-case "lint reports an entry number in the log that is not a directory"
+  (check-equal? (lint (struct-copy arc clean [invalid-log-entries (list "3")]))
+                (list "a/log/3: expected a directory")))
+
 (test-case "lint reports a committed entry without entry.md"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "1" #t #f results))]
-                                         [committed-log (list "1")]))
+  (check-equal? (lint (struct-copy arc clean [log (list (log-entry 1 #t #f run))]))
                 (list "a/log/1/entry.md: expected a regular file")))
 
 (test-case "lint reports an entry.md that does not open with a heading"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "1" #t "Text first\n# Heading\n" results))]
-                                         [committed-log (list "1")]))
+  (check-equal? (lint (struct-copy arc clean [log (list (log-entry 1 #t "Text first\n# Heading\n" run))]))
                 (list "a/log/1/entry.md: expected a heading on its first nonblank line")))
 
-(test-case "lint reports an older entry whose results.toml does not parse"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "1" #t "# First\n" "[run]")
-                                                    (log-entry-files "2" #t "# Second\n" results))]))
+(test-case "lint reports an entry whose results.toml does not parse"
+  (check-equal? (lint (struct-copy arc clean
+                                   [log (list (log-entry 1 #t "# First\n" "a/log/1/results.toml is missing project")
+                                              (log-entry 2 #t "# Second\n" run))]))
                 (list "a/log/1/results.toml is missing project")))
 
-(test-case "lint reports log entries in numeric order"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "10" #t "# Tenth\n" "[run]")
-                                                    (log-entry-files "2" #t "# Second\n" "[run]"))]
-                                         [committed-log (list "2" "10")]))
-                (list "a/log/2/results.toml is missing project"
-                      "a/log/10/results.toml is missing project")))
+(test-case "lint reports a committed entry without results.toml"
+  (check-equal? (lint (struct-copy arc clean [log (list (log-entry 1 #t "# First\n" #f))]))
+                (list "a/log/1/results.toml: expected a regular file")))
 
 (test-case "a pending entry may lack entry.md and results.toml"
-  (check-equal? (parse-lint (struct-copy arc-files clean
-                                         [log (list (log-entry-files "1" #t "# First\n" results)
-                                                    (log-entry-files "2" #t #f #f))]
-                                         [committed-log (list "1")]))
+  (check-equal? (lint (struct-copy arc clean
+                                   [log (list (log-entry 1 #t "# First\n" run)
+                                              (log-entry 2 #f #f #f))]))
                 null))
 
 (test-case "lint reports nothing when the report inlines exactly the budget"
-  (check-equal? (parse-lint (padded 24000)) null))
+  (check-equal? (lint (padded 24000)) null))
 
 (test-case "lint reports a report over the budget"
-  (check-equal? (length (parse-lint (padded 24001))) 1))
+  (check-equal? (length (lint (padded 24001))) 1))
 
 (test-case "the budget diagnostic lists the three largest sections, largest first"
   (check-regexp-match
    #rx"^a: the report inlines 25\\.[0-9] KB, over the 24 KB budget; largest: arc:tasks.md 20\\.0 KB, arc:do-not-reopen.md 3\\.0 KB, arc:review.md 2\\.0 KB$"
-   (first (parse-lint (with-text (with-text (with-text clean "tasks.md" (make-string 20000 #\a))
+   (first (lint (with-text (with-text (with-text clean "tasks.md" (make-string 20000 #\a))
                                             "review.md" (make-string 2000 #\a))
                                  "do-not-reopen.md" (make-string 3000 #\a))))))
 
@@ -218,16 +191,14 @@
 
 (test-case "the workflow is inlined under the reference start.toml gives"
   (check-equal? (assoc "handoff:workflow-x.md"
-                       (sections (struct-copy arc-files
-                                              (with-text clean "start.toml" "next = 'n'
-                                                                             workflow = 'handoff:workflow-x.md'
-                                                                             read-first = []")
-                                              [workflow "W"])
+                       (sections (struct-copy arc clean
+                                              [start (start "n" (scope-path 'handoff (string->path "workflow-x.md")) null)]
+                                              [workflow-text "W"])
                                  2))
                 (cons "handoff:workflow-x.md" "W")))
 
 (test-case "a missing file is left out of the report"
-  (check-false (assoc "arc:workflow.md" (sections (struct-copy arc-files clean [workflow #f]) 2))))
+  (check-false (assoc "arc:workflow.md" (sections (struct-copy arc clean [workflow-text #f]) 2))))
 
 (test-case "the report inlines the entry it is given"
   (check-equal? (assoc "arc:log/1/entry.md" (sections clean 1))
