@@ -13,15 +13,15 @@
 
 (define recorded (struct-copy check-run run [head head]))
 
-(define here (project (string->path "/p") "main" head (history null null)))
+(define here (project-status (string->path "/p") "main" head (history null null)))
 
-(: project-output (-> project (U (Pairof Positive-Integer check-run) #f) String))
-(define (project-output project baseline)
-  (with-output-to-string (thunk (print-project project baseline))))
+(: project-output (-> project-status (U (Pairof Positive-Integer check-run) #f) String))
+(define (project-output project-status baseline)
+  (with-output-to-string (thunk (print-project project-status baseline))))
 
-(: with-history (-> (Listof String) (Listof String) project))
+(: with-history (-> (Listof String) (Listof String) project-status))
 (define (with-history only-recorded only-current)
-  (struct-copy project here [history (history only-recorded only-current)]))
+  (struct-copy project-status here [history (history only-recorded only-current)]))
 
 (: repository-output (-> (Listof String) arc (Listof String) String))
 (define (repository-output diagnostics parsed dirty)
@@ -59,13 +59,13 @@
                                "  > bbb New\n")))
 
 (test-case "the project section says when the recorded head does not resolve"
-  (check-equal? (project-output (struct-copy project here [history 'unresolvable]) (cons 1 recorded))
+  (check-equal? (project-output (struct-copy project-status here [history 'unresolvable]) (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")))
 
 (test-case "the project section says when the branch differs from the baseline's"
-  (check-equal? (project-output (struct-copy project here [branch "topic"]) (cons 1 recorded))
+  (check-equal? (project-output (struct-copy project-status here [branch "topic"]) (cons 1 recorded))
                 (string-append "now: topic at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "the branch differs from log/1\n"
@@ -75,7 +75,7 @@
   (check-equal? (project-output here #f) "now: main at 0123456789ab\n"))
 
 (test-case "a detached project without commits"
-  (check-equal? (project-output (project (string->path "/p") #f #f (history null null)) #f)
+  (check-equal? (project-output (project-status (string->path "/p") #f #f (history null null)) #f)
                 "now: detached with no commits\n"))
 
 (test-case "the project section lists at most 20 commits"

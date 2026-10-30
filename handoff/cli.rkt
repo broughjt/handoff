@@ -49,13 +49,13 @@
 (struct guide-subcommand () #:transparent)
 
 ;; "Envisioning the hereafter, listenin' to Steve Wonder"
-(struct invocation ([repository : (U Path #f)]
+(struct invocation ([handoff-repository : (U Path #f)]
                     [subcommand : Subcommand])
   #:transparent)
 
 (: parse-arguments (-> (Vectorof String) invocation))
 (define (parse-arguments argv)
-  (define repository : (U Path #f) #f)
+  (define handoff-repository : (U Path #f) #f)
   (command-line
    #:program "handoff"
    #:argv argv
@@ -72,11 +72,12 @@
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
-                     (set! repository (string->path (assert path string?)))]
+                     (set! handoff-repository
+                           (string->path (assert path string?)))]
    #:args (subcommand . arguments)
    ;; Typed Racket types the formal arguments of `#:args` as `Any`, so we do a
    ;; runtime check explicitly (that we expect will never fail).
-   (invocation repository
+   (invocation handoff-repository
                (parse-subcommand (assert subcommand string?)
                                  (map (λ (a) (assert a string?)) arguments)))))
 

@@ -67,7 +67,7 @@
          find-pending-log-entry
          find-baseline
          lint
-         (struct-out project)
+         (struct-out project-status)
          (struct-out history)
          inlined-sections
          omit-finished-tasks
@@ -100,30 +100,35 @@
        [(invocation option subcommand)
         (when (and option (not (git-repository? option)))
           (raise-handoff-error "~a is not a git repository" option))
-        ;; TODO: Rename to project-repository and handoff-repository throughout
-        ;; the code
-        (define repository
+        (define handoff-repository
           (simple-form-path
            (or option (find-handoff-repository (current-directory)))))
         (match subcommand
-          [(list-subcommand archived?) (handle-list repository archived?)]
+          [(list-subcommand archived?)
+           (handle-list handoff-repository archived?)]
           [(start-subcommand arc)
-           (handle-start repository (select-arc repository arc))]
+           (handle-start handoff-repository
+                         (select-arc handoff-repository arc))]
           [(check-subcommand arc compare?)
-           (handle-check repository (select-arc repository arc) compare?)]
+           (handle-check handoff-repository
+                         (select-arc handoff-repository arc)
+                         compare?)]
           [(lint-subcommand arc)
-           (handle-lint repository (select-arc repository arc))]
+           (handle-lint handoff-repository
+                        (select-arc handoff-repository arc))]
           [(update-subcommand 'begin arc)
-           (handle-update-begin repository (select-arc repository arc))]
+           (handle-update-begin handoff-repository
+                                (select-arc handoff-repository arc))]
           [(update-subcommand 'commit arc)
-           (handle-update-commit repository (select-arc repository arc))]
+           (handle-update-commit handoff-repository
+                                 (select-arc handoff-repository arc))]
           [(new-subcommand arc workflow)
-           (handle-new repository arc workflow)]
+           (handle-new handoff-repository arc workflow)]
           [(workflow-install-subcommand name)
-           (handle-workflow-install repository name)]
+           (handle-workflow-install handoff-repository name)]
           [(workflow-fork-subcommand arc source name)
-           (handle-workflow-fork repository
-                                 (select-arc repository arc)
+           (handle-workflow-fork handoff-repository
+                                 (select-arc handoff-repository arc)
                                  source
                                  name)])]))))
 
@@ -140,29 +145,34 @@
 ;;; Commands
 
 (: handle-list (-> Path Boolean Status))
-(define (handle-list repository archived?)
+(define (handle-list handoff-repository archived?)
   (for ([arc-name (in-list ((if archived?
                                 list-archived-arcs
                                 list-arcs)
-                            repository))])
+                            handoff-repository))])
     (displayln arc-name))
   'success)
 
 (: handle-start (-> Path String Status))
-(define (handle-start repository name)
-  (define project-path (find-project-repository repository))
-  (define parsed (read-arc repository project-path name))
+(define (handle-start handoff-repository name)
+  (define project-repository (find-project-repository handoff-repository))
+  (define parsed (read-arc handoff-repository project-repository name))
   (cond
     [(arc? parsed)
      (define baseline (find-baseline name (arc-log parsed)))
-     (define results (run-checks project-path (arc-checks parsed)))
-     (define project
-       (read-project project-path (and baseline (cdr baseline))))
+     (define results (run-checks project-repository (arc-checks parsed)))
+     (define project-status
+       (read-project-status project-repository (and baseline (cdr baseline))))
      (define dirty
        (string-split
-        (git repository "--no-optional-locks" "status" "--porcelain")
+        (git handoff-repository "--no-optional-locks" "status" "--porcelain")
         "\n"))
-     (print-start repository parsed baseline results project dirty)
+     (print-start handoff-repository
+                  parsed
+                  baseline
+                  results
+                  project-status
+                  dirty)
      'success]
     [else
      (for ([message (in-list parsed)])
@@ -170,19 +180,20 @@
      'usage]))
 
 (: handle-check (-> Path String Boolean Status))
-(define (handle-check repository name compare?)
-  (define checks (read-checks (build-path repository name checks-file)))
-  (define project (find-project-repository repository))
+(define (handle-check handoff-repository name compare?)
+  (define checks
+    (read-checks (build-path handoff-repository name checks-file)))
+  (define project-repository (find-project-repository handoff-repository))
   (define results
     (cond
       [compare?
        ;; Read the baseline first, so that if it is broken, we refuse with an
        ;; error before running the checks.
        (match-define (cons log-entry-index baseline)
-         (or (find-baseline name (car (read-log repository name)))
+         (or (find-baseline name (car (read-log handoff-repository name)))
              (raise-handoff-error "~a has no committed log entry to compare against"
                                   name)))
-       (define results (run-checks project checks))
+       (define results (run-checks project-repository checks))
        (print-comparisons (compare-check-results (check-run-results baseline)
                                                  results)
                           log-entry-index
@@ -190,7 +201,7 @@
                           (check-run-started baseline))
        results]
       [else
-       (define results (run-checks project checks))
+       (define results (run-checks project-repository checks))
        (print-results results)
        results]))
   (if (andmap (λ ([result : check-result])
@@ -200,9 +211,11 @@
       'failure))
 
 (: handle-lint (-> Path String Status))
-(define (handle-lint repository name)
+(define (handle-lint handoff-repository name)
   (define parsed
-    (read-arc repository (find-project-repository repository) name))
+    (read-arc handoff-repository
+              (find-project-repository handoff-repository)
+              name))
   (define diagnostics (if (arc? parsed) (lint parsed) parsed))
   (for ([diagnostic (in-list diagnostics)])
     (displayln diagnostic))
@@ -210,15 +223,15 @@
   (if (empty? diagnostics) 'success 'failure))
 
 (: handle-update-begin (-> Path String Status))
-(define (handle-update-begin repository name)
+(define (handle-update-begin handoff-repository name)
   (error 'handle-update-begin "unimplemented"))
 
 (: handle-update-commit (-> Path String Status))
-(define (handle-update-commit repository name)
+(define (handle-update-commit handoff-repository name)
   (error 'handle-update-commit "unimplemented"))
 
 (: handle-new (-> Path String (U String #f) Status))
-(define (handle-new repository arc workflow)
+(define (handle-new handoff-repository arc workflow)
   (error 'handle-new "unimplemented"))
 
 (: handle-workflow-list (-> Status))
@@ -226,11 +239,11 @@
   (error 'handle-workflow-list "unimplemented"))
 
 (: handle-workflow-install (-> Path String Status))
-(define (handle-workflow-install repository name)
+(define (handle-workflow-install handoff-repository name)
   (error 'handle-workflow-install "unimplemented"))
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
-(define (handle-workflow-fork repository arc source name)
+(define (handle-workflow-fork handoff-repository arc source name)
   (error 'handle-workflow-fork "unimplemented"))
 
 (: handle-guide (-> Status))
@@ -239,7 +252,7 @@
 
 ;;; Repositories
 
-(define repository-path (build-path ".scratch" "handoff"))
+(define handoff-repository-path (build-path ".scratch" "handoff"))
 (define start-file "start.toml")
 (define arc-name-regex #px"^(?!(?:\\.|\\.\\.|\\.git)$)[^/]+$")
 
@@ -251,20 +264,21 @@
 (: find-handoff-repository (-> Path-String Path))
 (define (find-handoff-repository start)
   (let loop ([directory (simple-form-path start)])
-    (define candidate (build-path directory repository-path))
+    (define candidate (build-path directory handoff-repository-path))
     (define-values (parent _name _directory?) (split-path directory))
     (cond
       [(git-repository? candidate) candidate]
       [(path? parent) (loop parent)]
       [else (raise-handoff-error "no ~a/ at or above ~a"
-                                 repository-path
+                                 handoff-repository-path
                                  start)])))
 
 (: find-project-repository (-> Path Path))
-(define (find-project-repository repository)
+(define (find-project-repository handoff-repository)
   (string->path
-   (or (git* (build-path repository 'up) "rev-parse" "--show-toplevel")
-       (raise-handoff-error "no project repository contains ~a" repository))))
+   (or (git* (build-path handoff-repository 'up) "rev-parse" "--show-toplevel")
+       (raise-handoff-error "no project repository contains ~a"
+                            handoff-repository))))
 
 ;;; Arc helpers
 
@@ -275,16 +289,16 @@
   (and (directory-exists? path) (file-exists? (build-path path start-file))))
 
 (: list-arcs (-> Path (Listof String)))
-(define (list-arcs repository)
+(define (list-arcs handoff-repository)
   ;; Note: `directory-list` sorts by `path<?`.
   (for/list : (Listof String)
-            ([entry (in-list (directory-list repository))]
-             #:when (arc-directory? (build-path repository entry)))
+            ([entry (in-list (directory-list handoff-repository))]
+             #:when (arc-directory? (build-path handoff-repository entry)))
     (path->string entry)))
 
 (: list-archived-arcs (-> Path (Listof String)))
-(define (list-archived-arcs repository)
-  (define output (git repository
+(define (list-archived-arcs handoff-repository)
+  (define output (git handoff-repository
                       "tag"
                       "--list"
                       (string-append archive-tag-prefix "*")))
@@ -293,16 +307,18 @@
         string<?))
 
 (: select-arc (-> Path (U String #f) String))
-(define (select-arc repository name)
+(define (select-arc handoff-repository name)
   (cond
     [name
      (unless (regexp-match? arc-name-regex name)
        (raise-handoff-error "specify a top-level arc directory name"))
-     (unless (directory-exists? (build-path repository name))
-       (raise-handoff-error "~a is not a directory in ~a" name repository))
+     (unless (directory-exists? (build-path handoff-repository name))
+       (raise-handoff-error "~a is not a directory in ~a"
+                            name
+                            handoff-repository))
      name]
     [else
-     (define arcs (list-arcs repository))
+     (define arcs (list-arcs handoff-repository))
      (cond
        [(empty? arcs) (raise-handoff-error "there are no active arcs")]
        [(empty? (rest arcs)) (first arcs)]
@@ -521,7 +537,7 @@
 ;;; Running checks
 
 (: run-checks (-> Path (Listof check) (Listof check-result)))
-(define (run-checks project checks)
+(define (run-checks project-repository checks)
   (define bash (or (find-executable-path "bash")
                    (raise-handoff-error "bash not found on PATH")))
   (define directory (make-temporary-directory))
@@ -534,7 +550,7 @@
      (parameterize ([current-custodian custodian]
                     [current-subprocess-custodian-mode 'kill]
                     [subprocess-group-enabled #t]
-                    [current-directory project])
+                    [current-directory project-repository])
        (: start-check (-> check Path (Evtof check-result)))
        (define (start-check check output)
          (define started (current-inexact-monotonic-milliseconds))
@@ -820,8 +836,8 @@
 
 ;; Either the arc, or the error of every file that does not parse.
 (: read-arc (-> Path Path String (U arc (Listof String))))
-(define (read-arc repository project name)
-  (define directory (build-path repository name))
+(define (read-arc handoff-repository project-repository name)
+  (define directory (build-path handoff-repository name))
   (define errors : (Listof String) null)
   (: attempt (All (A) (-> (-> A) (U A #f))))
   (define (attempt read)
@@ -849,7 +865,7 @@
   (define checks
     (and checks-text
          (attempt (thunk (parse-checks checks-text (build-path name checks-file))))))
-  (define log* (attempt (thunk (read-log repository name))))
+  (define log* (attempt (thunk (read-log handoff-repository name))))
   (cond
     [(and start* checks log* (empty? errors))
      (match-define (cons entries invalid-log-entries) log*)
@@ -858,16 +874,23 @@
                  ([file (in-list (cons start-file state-files))])
          (values file (assert (hash-ref texts file) string?))))
      (define workflow-path
-       (resolve-scope-path repository name project (start-workflow start*)))
+       (resolve-scope-path handoff-repository
+                           name
+                           project-repository
+                           (start-workflow start*)))
      (define workflow-text
        (and (file-exists? workflow-path) (file->string workflow-path)))
      (define missing-references
        (filter-not (λ ([path : scope-path])
                      (file-exists?
-                      (resolve-scope-path repository name project path)))
+                      (resolve-scope-path handoff-repository
+                                          name
+                                          project-repository
+                                          path)))
                    (cons (start-workflow start*)
                          (map read-first-path (start-read-first start*)))))
-     (define other-documents (read-arc-other-documents repository directory))
+     (define other-documents
+       (read-arc-other-documents handoff-repository directory))
      (arc name
           start*
           checks
@@ -880,10 +903,11 @@
     [else (reverse errors)]))
 
 (: read-log (-> Path String (Pairof (Listof log-entry) (Listof String))))
-(define (read-log repository name)
-  (define directory (build-path repository name log-directory))
+(define (read-log handoff-repository name)
+  (define directory (build-path handoff-repository name log-directory))
   (define committed
-    (let ([paths (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
+    (let ([paths (git* handoff-repository
+                       "ls-tree" "-z" "--name-only" "HEAD" "--"
                        (string-append name "/" log-directory "/"))])
       (if paths
           (for/list : (Listof String)
@@ -922,7 +946,7 @@
     [else (cons null null)]))
 
 (: read-arc-other-documents (-> Path Path (Listof (Pairof scope-path (U String #f)))))
-(define (read-arc-other-documents repository arc-directory)
+(define (read-arc-other-documents handoff-repository arc-directory)
   (define layout
     (map string->path
          (list* start-file checks-file log-directory state-files)))
@@ -940,8 +964,9 @@
                                 entry))
            (markdown path)))
    (for*/list : (Listof (Pairof scope-path (U String #f)))
-              ([entry (in-list (directory-list repository))]
-               [text (in-value (markdown (build-path repository entry)))]
+              ([entry (in-list (directory-list handoff-repository))]
+               [text (in-value
+                      (markdown (build-path handoff-repository entry)))]
                #:when text)
      (cons (scope-path 'handoff entry) text))))
 
@@ -1033,11 +1058,11 @@
           (path->string (scope-path-path path))))
 
 (: resolve-scope-path (-> Path String Path scope-path Path))
-(define (resolve-scope-path repository arc project path)
+(define (resolve-scope-path handoff-repository arc project-repository path)
   (build-path (case (scope-path-scope path)
-                [(arc) (build-path repository arc)]
-                [(handoff) repository]
-                [(project) project])
+                [(arc) (build-path handoff-repository arc)]
+                [(handoff) handoff-repository]
+                [(project) project-repository])
               (scope-path-path path)))
 
 (: parse-log-entry-name (-> String (U Positive-Integer #f)))
@@ -1153,41 +1178,46 @@
 (define report-budget 24) ; in KB of 1000 bytes
 (define commit-limit 20)
 
-(struct project ([path : Path]
-                 [branch : (U String #f)]
-                 [head : (U String #f)]
-                 [history : (U 'unresolvable history)])
+(struct project-status ([path : Path]
+                        [branch : (U String #f)]
+                        [head : (U String #f)]
+                        [history : (U 'unresolvable history)])
   #:transparent)
 
 (struct history ([only-recorded : (Listof String)]
                  [only-current : (Listof String)])
   #:transparent)
 
-(: read-project (-> Path (U check-run #f) project))
-(define (read-project path baseline)
-  (define head (git* path "rev-parse" "--verify" "--quiet" "HEAD"))
+(: read-project-status (-> Path (U check-run #f) project-status))
+(define (read-project-status project-repository baseline)
+  (define head
+    (git* project-repository "rev-parse" "--verify" "--quiet" "HEAD"))
   (define recorded (and baseline (check-run-head baseline)))
   (: commits (-> (U String #f) (U String #f) (Listof String)))
   (define (commits from to)
     (if to
-        (string-split (git path "log" "--abbrev=12" "--format=%h %s"
+        (string-split (git project-repository
+                           "log"
+                           "--abbrev=12"
+                           "--format=%h %s"
                            (if from (string-append from ".." to) to))
                       "\n")
         null))
-  (define branch (git* path "symbolic-ref" "--quiet" "--short" "HEAD"))
-  (project path
-           branch
-           head
-           (cond
-             [(not baseline) (history null null)]
-             [(and recorded
-                   (not (git* path
-                              "cat-file"
-                              "-e"
-                              (string-append recorded "^{commit}"))))
-              'unresolvable]
-             [else (history (commits head recorded)
-                            (commits recorded head))])))
+  (define branch
+    (git* project-repository "symbolic-ref" "--quiet" "--short" "HEAD"))
+  (project-status project-repository
+                  branch
+                  head
+                  (cond
+                    [(not baseline) (history null null)]
+                    [(and recorded
+                          (not (git* project-repository
+                                     "cat-file"
+                                     "-e"
+                                     (string-append recorded "^{commit}"))))
+                     'unresolvable]
+                    [else (history (commits head recorded)
+                                   (commits recorded head))])))
 
 (: inlined-sections (-> arc (U log-entry #f) (Listof (Pairof String String))))
 (define (inlined-sections parsed entry)
@@ -1238,16 +1268,21 @@
 
 (: print-start (-> Path arc
                    (U (Pairof Positive-Integer check-run) #f)
-                   (Listof check-result) project (Listof String)
+                   (Listof check-result) project-status (Listof String)
                    Void))
-(define (print-start repository parsed baseline results project dirty)
-  (printf "project: ~a\n" (project-path project))
-  (printf "handoff repository: ~a\n" repository)
+(define (print-start handoff-repository
+                     parsed
+                     baseline
+                     results
+                     project-status
+                     dirty)
+  (printf "project: ~a\n" (project-status-path project-status))
+  (printf "handoff repository: ~a\n" handoff-repository)
   (print-sections (inlined-sections parsed (find-last-committed-log-entry (arc-log parsed))))
   (print-header "other documents")
   (print-documents parsed)
   (print-header "project")
-  (print-project project baseline)
+  (print-project project-status baseline)
   (print-header "handoff repository")
   (print-handoff-repository (lint parsed) parsed dirty)
   (print-header "checks")
@@ -1293,10 +1328,12 @@
             (scope-path->string (car document))
             (if (string=? summary "") "" (string-append ": " summary)))))
 
-(: print-project (-> project (U (Pairof Positive-Integer check-run) #f) Void))
-(define (print-project project baseline)
-  (printf "now: ~a\n" (describe-head (project-branch project)
-                                     (project-head project)))
+(: print-project (-> project-status
+                     (U (Pairof Positive-Integer check-run) #f)
+                     Void))
+(define (print-project project-status baseline)
+  (printf "now: ~a\n" (describe-head (project-status-branch project-status)
+                                     (project-status-head project-status)))
   (when baseline
     (match-define (cons number run) baseline)
     (: commits (-> String (Listof String) Void))
@@ -1309,9 +1346,10 @@
     (printf "at log/~a: ~a\n"
             number
             (describe-head (check-run-branch run) (check-run-head run)))
-    (unless (equal? (check-run-branch run) (project-branch project))
+    (unless (equal? (check-run-branch run)
+                    (project-status-branch project-status))
       (printf "the branch differs from log/~a\n" number))
-    (match (project-history project)
+    (match (project-status-history project-status)
       ['unresolvable
        (displayln "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine")]
       [(history '() '()) (displayln "no new commits")]
