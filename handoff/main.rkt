@@ -100,10 +100,14 @@
        [(invocation option subcommand)
         (when (and option (not (git-repository? option)))
           (raise-handoff-error "~a is not a git repository" option))
+        ;; TODO: Rename to project-repository and handoff-repository throughout
+        ;; the code
         (define repository
           (simple-form-path
            (or option (find-handoff-repository (current-directory)))))
         (match subcommand
+          ;; TODO: Order the handle-* definitions below and the cases in
+          ;; parse-subcommand in the same order as they appear here
           [(list-subcommand archived?) (handle-list repository archived?)]
           [(start-subcommand arc)
            (handle-start repository (select-arc repository arc))]
@@ -136,6 +140,8 @@
     [(usage) 2]))
 
 ;;; Command line
+
+;; TODO: Put this in a cli.rkt module
 
 (define-type Subcommand
   (U list-subcommand
@@ -200,6 +206,7 @@
                (parse-subcommand (assert subcommand string?)
                                  (map (λ (a) (assert a string?)) arguments)))))
 
+;; TODO: Make parse-*-subcommand helpers per subcommand here
 (: parse-subcommand (-> String (Listof String) Subcommand))
 (define (parse-subcommand subcommand arguments)
   (define program (string-append "handoff " subcommand))
