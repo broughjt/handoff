@@ -22,6 +22,8 @@
          expect-table
          expect-tables
          expect-string
+         expect-nonempty-string
+         expect-integer
          expect-natural
          expect-datetime
          toml-string
@@ -69,9 +71,23 @@
 (: expect-string (-> Table Symbol String String))
 (define (expect-string table key context)
   (define value (hash-ref table key #f))
+  (if (string? value)
+      value
+      (raise-handoff-error "~a: ~a must be a string" context key)))
+
+(: expect-nonempty-string (-> Table Symbol String String))
+(define (expect-nonempty-string table key context)
+  (define value (hash-ref table key #f))
   (if (and (string? value) (non-empty-string? (string-trim value)))
       value
       (raise-handoff-error "~a: ~a must be a nonempty string" context key)))
+
+(: expect-integer (-> Table Symbol String Integer))
+(define (expect-integer table key context)
+  (define value (hash-ref table key #f))
+  (if (exact-integer? value)
+      value
+      (raise-handoff-error "~a: ~a must be an integer" context key)))
 
 (: expect-natural (-> Table Symbol String Natural))
 (define (expect-natural table key context)

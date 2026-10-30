@@ -11,7 +11,7 @@
                  'entry
                  "a.toml"
                  (λ ([table : Table] [context : String])
-                   (expect-string table 'id context))))
+                   (expect-nonempty-string table 'id context))))
 
 (test-case "an array of tables is parsed in order"
   (check-equal? (ids "[[entry]]
@@ -37,3 +37,12 @@
                           id = 'a'
                           [[entry]]
                           id = ''"))))
+
+(test-case "expect-string accepts an empty string"
+  (check-equal? (expect-string (read-toml "a = ''" "a.toml") 'a "a.toml") ""))
+
+(test-case "expect-integer rejects a float"
+  (check-exn #rx"^a.toml: a must be an integer$"
+             (thunk (expect-integer (read-toml "a = 1.5" "a.toml")
+                                    'a
+                                    "a.toml"))))

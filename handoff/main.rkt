@@ -427,13 +427,13 @@
        (check-result (table->check entry context)
                      (table->check-observation entry context)))
      (compose1 check-id check-result-check)))
-  (check-run (expect-string run 'host run-context)
+  (check-run (expect-nonempty-string run 'host run-context)
              (expect-datetime run 'started run-context)
              (expect-seconds run 'duration run-context)
              (and (hash-has-key? project 'branch)
-                  (expect-string project 'branch project-context))
+                  (expect-nonempty-string project 'branch project-context))
              (and (hash-has-key? project 'head)
-                  (expect-string project 'head project-context))
+                  (expect-nonempty-string project 'head project-context))
              results))
 
 (: parse-check-tables (All (A) (-> Table String (-> Table String A) (-> A String)
@@ -449,22 +449,17 @@
 
 (: table->check (-> Table String check))
 (define (table->check table context)
-  (check (expect-string table 'id context)
-         (expect-string table 'claim context)
-         (expect-string table 'command context)
+  (check (expect-nonempty-string table 'id context)
+         (expect-nonempty-string table 'claim context)
+         (expect-nonempty-string table 'command context)
          (expect-timeout table context)))
 
 (: table->check-observation (-> Table String check-observation))
 (define (table->check-observation table context)
-  (define exit (hash-ref table 'exit #f))
-  (unless (or (not exit) (exact-integer? exit))
-    (raise-handoff-error "~a: exit must be an integer" context))
-  (define output (hash-ref table 'output))
-  (unless (string? output)
-    (raise-handoff-error "~a: output must be a string" context))
-  (check-observation exit
+  (check-observation (and (hash-has-key? table 'exit)
+                          (expect-integer table 'exit context))
                      (expect-seconds table 'duration context)
-                     output
+                     (expect-string table 'output context)
                      (if (hash-has-key? table 'truncated)
                          (expect-natural table 'truncated context)
                          0)))
@@ -1005,19 +1000,20 @@
   (define source-string (path->string source))
   (define table (read-toml text source-string))
   (expect-fields table (list 'next 'workflow 'read-first) null source-string)
-  (start (expect-string table 'next source-string)
+  (start (expect-nonempty-string table 'next source-string)
          (expect-scope-path table 'workflow source-string)
          (expect-tables table
                         'read-first
                         source-string
                         (λ ([read : Table] [context : String])
                           (expect-fields read (list 'path 'reason) null context)
-                          (read-first (expect-scope-path read 'path context)
-                                      (expect-string read 'reason context))))))
+                          (read-first
+                           (expect-scope-path read 'path context)
+                           (expect-nonempty-string read 'reason context))))))
 
 (: expect-scope-path (-> Table Symbol String scope-path))
 (define (expect-scope-path table key context)
-  (define text (expect-string table key context))
+  (define text (expect-nonempty-string table key context))
   (or (parse-scope-path text)
       (raise-handoff-error "~a: ~a must be arc:, handoff: or project: followed by a relative path without .."
                            context
