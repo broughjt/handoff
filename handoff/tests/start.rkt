@@ -13,15 +13,15 @@
 
 (define recorded (struct-copy check-run run [head head]))
 
-(define here (project (string->path "/p") "main" head null))
+(define here (project (string->path "/p") "main" head (history null null)))
 
 (: project-output (-> project (U (Pairof Positive-Integer check-run) #f) String))
 (define (project-output project baseline)
   (with-output-to-string (thunk (print-project project baseline))))
 
-(: with-history (-> (Listof String) project))
-(define (with-history history)
-  (struct-copy project here [history history]))
+(: with-history (-> (Listof String) (Listof String) project))
+(define (with-history only-recorded only-current)
+  (struct-copy project here [history (history only-recorded only-current)]))
 
 (: repository-output (-> (Listof String) arc (Listof String) String))
 (define (repository-output diagnostics parsed dirty)
@@ -43,7 +43,7 @@
                                "no new commits\n")))
 
 (test-case "the project section lists commits since the baseline"
-  (check-equal? (project-output (with-history (list "> aaa One" "> bbb Two")) (cons 1 recorded))
+  (check-equal? (project-output (with-history null (list "aaa One" "bbb Two")) (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "commits since log/1:\n"
@@ -51,7 +51,7 @@
                                "  bbb Two\n")))
 
 (test-case "the project section marks each side of a rewritten history"
-  (check-equal? (project-output (with-history (list "< aaa Old" "> bbb New")) (cons 1 recorded))
+  (check-equal? (project-output (with-history (list "aaa Old") (list "bbb New")) (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "history rewritten since log/1; < marks commits only in the recorded history, > only in the current one:\n"
@@ -75,12 +75,12 @@
   (check-equal? (project-output here #f) "now: main at 0123456789ab\n"))
 
 (test-case "a detached project without commits"
-  (check-equal? (project-output (project (string->path "/p") #f #f null) #f)
+  (check-equal? (project-output (project (string->path "/p") #f #f (history null null)) #f)
                 "now: detached with no commits\n"))
 
 (test-case "the project section lists at most 20 commits"
-  (define lines (for/list : (Listof String) ([n (in-range 25)]) (format "> c~a" n)))
-  (check-equal? (take-right (string-split (project-output (with-history lines) (cons 1 recorded)) "\n") 2)
+  (define lines (for/list : (Listof String) ([n (in-range 25)]) (format "c~a" n)))
+  (check-equal? (take-right (string-split (project-output (with-history null lines) (cons 1 recorded)) "\n") 2)
                 (list "  c19" "  and 5 more")))
 
 (test-case "the handoff repository section of a clean repository"

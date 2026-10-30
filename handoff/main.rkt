@@ -68,6 +68,7 @@
          find-baseline
          lint
          (struct-out project)
+         (struct-out history)
          inlined-sections
          omit-finished-tasks
          print-sections
@@ -1321,33 +1322,38 @@
 (struct project ([path : Path]
                  [branch : (U String #f)]
                  [head : (U String #f)]
-                 [history : (U 'unresolvable (Listof String))])
+                 [history : (U 'unresolvable history)])
+  #:transparent)
+
+(struct history ([only-recorded : (Listof String)]
+                 [only-current : (Listof String)])
   #:transparent)
 
 (: read-project (-> Path (U check-run #f) project))
 (define (read-project path baseline)
   (define head (git* path "rev-parse" "--verify" "--quiet" "HEAD"))
   (define recorded (and baseline (check-run-head baseline)))
-  (define (commits . [arguments : String *])
-    (string-split (apply git path "log" "--abbrev=12" arguments) "\n"))
+  (: commits (-> (U String #f) (U String #f) (Listof String)))
+  (define (commits from to)
+    (if to
+        (string-split (git path "log" "--abbrev=12" "--format=%h %s"
+                           (if from (string-append from ".." to) to))
+                      "\n")
+        null))
   (define branch (git* path "symbolic-ref" "--quiet" "--short" "HEAD"))
-  (define history 
-    (cond
-      [(not baseline) null]
-      [(and recorded
-            (not (git* path
-                       "cat-file"
-                       "-e"
-                       (string-append recorded "^{commit}"))))
-       'unresolvable]
-      [(and recorded head)
-       (commits "--left-right"
-                "--format=%m %h %s"
-                (string-append recorded "...HEAD"))]
-      [recorded (commits "--format=< %h %s" recorded)]
-      [head (commits "--format=> %h %s" "HEAD")]
-      [else null]))
-  (project path branch head history))
+  (project path
+           branch
+           head
+           (cond
+             [(not baseline) (history null null)]
+             [(and recorded
+                   (not (git* path
+                              "cat-file"
+                              "-e"
+                              (string-append recorded "^{commit}"))))
+              'unresolvable]
+             [else (history (commits head recorded)
+                            (commits recorded head))])))
 
 (: inlined-sections (-> arc (U log-entry #f) (Listof (Pairof String String))))
 (define (inlined-sections parsed entry)
@@ -1459,7 +1465,6 @@
                                      (project-head project)))
   (when baseline
     (match-define (cons number run) baseline)
-    (define history (project-history project))
     (: commits (-> String (Listof String) Void))
     (define (commits heading lines)
       (displayln heading)
@@ -1472,17 +1477,19 @@
             (describe-head (check-run-branch run) (check-run-head run)))
     (unless (equal? (check-run-branch run) (project-branch project))
       (printf "the branch differs from log/~a\n" number))
-    (cond
-      [(eq? history 'unresolvable)
+    (match (project-history project)
+      ['unresolvable
        (displayln "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine")]
-      [(empty? history) (displayln "no new commits")]
-      [(ormap (λ ([line : String]) (string-prefix? line "<")) history)
+      [(history '() '()) (displayln "no new commits")]
+      [(history '() only-current)
+       (commits (format "commits since log/~a:" number) only-current)]
+      [(history only-recorded only-current)
        (commits (format "history rewritten since log/~a; < marks commits only in the recorded history, > only in the current one:"
                         number)
-                history)]
-      [else
-       (commits (format "commits since log/~a:" number)
-                (map (λ ([line : String]) (substring line 2)) history))])))
+                (append (map (λ ([line : String]) (string-append "< " line))
+                             only-recorded)
+                        (map (λ ([line : String]) (string-append "> " line))
+                             only-current)))])))
 
 (: describe-head (-> (U String #f) (U String #f) String))
 (define (describe-head branch head)
