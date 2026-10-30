@@ -50,17 +50,6 @@
                       'verified 'verified 'unchanged 'still-unverified
                       'verified 'verified 'still-unverified 'unchanged)))
 
-(test-case "the baseline is the arc's highest-numbered log entry"
-  (check-equal? (find-latest-log-entry "v4" (list "v4/log/2"
-                                             "v4/log/10"
-                                             "v4/log/9"
-                                             "v4/log/notes.md"
-                                             "v40/log/11"))
-                10))
-
-(test-case "an arc without log entries has no baseline"
-  (check-false (find-latest-log-entry "v4" (list "v4/log/notes.md"))))
-
 (test-case "a comparison shows changes, the baseline's output and removed checks"
   (define baseline
     (list (check-result (check "flips" "it holds" "test -e x" 60)

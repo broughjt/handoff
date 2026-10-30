@@ -2,65 +2,34 @@
 ;; Parsing and linting arcs.
 
 (require racket/function
-         racket/port
+         racket/list
          (except-in typed/rackunit check)
          "../error.rkt"
-         "../main.rkt")
-
-(require/typed gregor
-  [iso8601->moment (-> String Moment)])
+         "../main.rkt"
+         "fixtures.rkt")
 
 (define source (string->path "a/start.toml"))
-
-(define results
-  (with-output-to-string
-    (thunk (write-check-run (check-run "murph"
-                                       (iso8601->moment "2026-10-29T18:00:00Z")
-                                       1
-                                       "main"
-                                       "abc123"
-                                       null)))))
-
-(define summarized "# Title\n\nWhat this covers.\n")
-
-(define clean
-  (arc-files "a"
-             (list* (cons "start.toml"
-                          "next = 'n'
-                           workflow = 'arc:workflow.md'
-
-                           [[read-first]]
-                           path = 'project:src/main.rkt'
-                           reason = 'the code'")
-                    (cons "checks.toml"
-                          "[[check]]
-                           id = 'tests'
-                           claim = 'The tests pass'
-                           command = 'true'")
-                    (for/list : (Listof (Pairof String (U String #f)))
-                              ([file (in-list (list "arc.md" "tasks.md" "do-not-reopen.md"
-                                                    "open-questions.md" "review.md"))])
-                      (cons file summarized)))
-             (list (cons (scope-path 'arc (string->path "workflow.md"))
-                         "<!-- created for this arc on 2026-10-29 -->\n# Workflow\n\nHow we work.\n")
-                   (cons (scope-path 'arc (string->path "notes/")) #f)
-                   (cons (scope-path 'handoff (string->path "topic.md")) summarized))
-             (list (log-entry-files "1" #t "# First\n" results)
-                   (log-entry-files "2" #t "# Second\n" results))
-             (list "1" "2")
-             (list (cons (scope-path 'arc (string->path "workflow.md")) #t)
-                   (cons (scope-path 'project (string->path "src/main.rkt")) #t))))
-
-(: with-text (-> arc-files String (U String #f) arc-files))
-(define (with-text files file text)
-  (struct-copy arc-files files
-               [texts (for/list : (Listof (Pairof String (U String #f)))
-                                ([entry (in-list (arc-files-texts files))])
-                        (if (equal? (car entry) file) (cons file text) entry))]))
 
 (: parse-lint (-> arc-files (Listof String)))
 (define (parse-lint files)
   (lint files (parse-arc files)))
+
+(: omit (-> String (Pairof String Natural)))
+(define (omit text)
+  (call-with-values (thunk (omit-finished-tasks text)) (inst cons String Natural)))
+
+(: sections (-> arc-files (U Positive-Integer #f) (Listof (Pairof String String))))
+(define (sections files entry)
+  (inlined-sections files (parse-arc files) entry))
+
+;; `clean` with tasks.md padded so that the report inlines `total` bytes.
+(: padded (-> Natural arc-files))
+(define (padded total)
+  (define others
+    (for/sum : Integer ([section (in-list (sections clean 2))]
+                        #:unless (equal? (car section) "arc:tasks.md"))
+      (bytes-length (string->bytes/utf-8 (cdr section)))))
+  (with-text clean "tasks.md" (make-string (assert (- total others) exact-nonnegative-integer?) #\a)))
 
 (test-case "start.toml parses into next, the workflow, and the read-first entries"
   (check-equal? (parse-start "next = 'Do the thing'
@@ -118,6 +87,12 @@
 (test-case "a log entry's name is a positive integer without leading zeros"
   (check-equal? (map parse-log-entry-name (list "1" "10" "01" "0" "x"))
                 (list 1 10 #f #f #f)))
+
+(test-case "the latest log entry is the highest entry number, ignoring other names"
+  (check-equal? (latest-log-entry (list "2" "10" "9" "notes.md" "011")) 10))
+
+(test-case "a log without entry numbers has no latest entry"
+  (check-false (latest-log-entry (list "notes.md"))))
 
 (test-case "an arc parses with its log entries in ascending order"
   (define parsed
@@ -210,3 +185,54 @@
                                                     (log-entry-files "2" #t #f #f))]
                                          [committed-log (list "1")]))
                 null))
+
+(test-case "lint reports nothing when the report inlines exactly the budget"
+  (check-equal? (parse-lint (padded 24000)) null))
+
+(test-case "lint reports a report over the budget"
+  (check-equal? (length (parse-lint (padded 24001))) 1))
+
+(test-case "the budget diagnostic lists the three largest sections, largest first"
+  (check-regexp-match
+   #rx"^a: the report inlines 25\\.[0-9] KB, over the 24 KB budget; largest: arc:tasks.md 20\\.0 KB, arc:do-not-reopen.md 3\\.0 KB, arc:review.md 2\\.0 KB$"
+   (first (parse-lint (with-text (with-text (with-text clean "tasks.md" (make-string 20000 #\a))
+                                            "review.md" (make-string 2000 #\a))
+                                 "do-not-reopen.md" (make-string 3000 #\a))))))
+
+(test-case "finished tasks are left out with the lines that continue them, and counted"
+  (check-equal? (omit "- [x] Done\n  detail\n- [ ] Open\n  detail\n- [x] Also done\n")
+                (cons "- [ ] Open\n  detail\n" 2)))
+
+(test-case "unfinished tasks and headings are kept"
+  (check-equal? (omit "# Tasks\n\n- [ ] Open\n")
+                (cons "# Tasks\n\n- [ ] Open\n" 0)))
+
+(test-case "a task checked with a capital X is finished"
+  (check-equal? (omit "- [X] Done\n") (cons "" 1)))
+
+(test-case "the report inlines the arc's files in order, with the given entry last"
+  (check-equal? (map (inst car String String) (sections clean 2))
+                (list "arc:start.toml" "arc:arc.md" "arc:workflow.md" "arc:tasks.md"
+                      "arc:do-not-reopen.md" "arc:open-questions.md" "arc:review.md"
+                      "arc:log/2/entry.md")))
+
+(test-case "the workflow is inlined under the reference start.toml gives"
+  (check-equal? (assoc "handoff:workflow-x.md"
+                       (sections (struct-copy arc-files
+                                              (with-text clean "start.toml" "next = 'n'
+                                                                             workflow = 'handoff:workflow-x.md'
+                                                                             read-first = []")
+                                              [workflow "W"])
+                                 2))
+                (cons "handoff:workflow-x.md" "W")))
+
+(test-case "a missing file is left out of the report"
+  (check-false (assoc "arc:workflow.md" (sections (struct-copy arc-files clean [workflow #f]) 2))))
+
+(test-case "the report inlines the entry it is given"
+  (check-equal? (assoc "arc:log/1/entry.md" (sections clean 1))
+                (cons "arc:log/1/entry.md" "# First\n")))
+
+(test-case "the report says how many finished tasks it left out"
+  (check-equal? (assoc "arc:tasks.md" (sections (with-text clean "tasks.md" "- [x] Done\n- [ ] Open\n") 2))
+                (cons "arc:tasks.md" "- [ ] Open\n(1 finished task left out; they are in arc:tasks.md)\n")))

@@ -51,13 +51,13 @@
          parse-checks
          parse-check-run
          write-check-run
-         find-latest-log-entry
          compare-check-results
          check-matched-change
          print-results
          print-comparisons
          (struct-out arc-files)
          (struct-out log-entry-files)
+         (struct-out baseline-files)
          (struct-out arc)
          (struct-out start)
          (struct-out read-first)
@@ -65,8 +65,18 @@
          parse-start
          parse-scope-path
          parse-log-entry-name
+         latest-log-entry
          parse-arc
-         lint)
+         parse-baseline
+         lint
+         (struct-out project)
+         inlined-sections
+         omit-finished-tasks
+         print-sections
+         print-documents
+         print-project
+         print-handoff-repository
+         print-start)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -309,8 +319,10 @@
       [compare?
        ;; Read the baseline first, so that if it is broken, we refuse with an
        ;; error before running the checks.
-       (define log-entry-index (find-baseline-log-entry repository arc))
-       (define baseline (read-baseline-checks repository arc log-entry-index))
+       (match-define (cons log-entry-index baseline)
+         (or (parse-baseline (read-arc-files repository arc))
+             (raise-handoff-error "~a has no committed log entry to compare against"
+                                  arc)))
        (define results (run-checks project checks))
        (print-comparisons (compare-check-results (check-run-results baseline)
                                                  results)
@@ -336,17 +348,25 @@
       (lint files (parse-arc files))))
   (for ([diagnostic (in-list diagnostics)])
     (displayln diagnostic))
-  (printf "~a: ~a\n"
-          arc
-          (case (length diagnostics)
-            [(0) "no errors"]
-            [(1) "1 error"]
-            [else (format "~a errors" (length diagnostics))]))
+  (printf "~a: ~a\n" arc (count-errors diagnostics))
   (if (empty? diagnostics) 'success 'failure))
 
 (: handle-start (-> Path String Status))
 (define (handle-start repository* name)
-  (error 'handle-start "unimplemented"))
+  (define repository (simple-form-path repository*))
+  (define files (read-arc-files repository name))
+  (define parsed (parse-arc files))
+  (define baseline (parse-baseline files))
+  (define project-directory (find-project-repository repository))
+  (define results (run-checks project-directory (arc-checks parsed)))
+  (define project
+    (read-project project-directory (and baseline (cdr baseline))))
+  (define dirty
+    (string-split
+     (git repository "--no-optional-locks" "status" "--porcelain")
+     "\n"))
+  (print-start repository files parsed baseline results project dirty)
+  'success)
 
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin repository name)
@@ -741,37 +761,21 @@
 
 ;; The baseline is the highest-numbered log entry committed to the handoff
 ;; repository, so a pending entry is never the baseline.
-(: find-baseline-log-entry (-> Path String Positive-Integer))
-(define (find-baseline-log-entry repository arc)
-  (define paths
-    (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
-          (string-append arc "/log/")))
-  (or (and paths (find-latest-log-entry arc (string-split paths "\u0000")))
-      (raise-handoff-error "~a has no committed log entry to compare against"
-                           arc)))
-
-(: read-baseline-checks (-> Path String Positive-Integer check-run))
-(define (read-baseline-checks repository arc log-entry-index)
-  (define path (format "~a/log/~a/~a" arc log-entry-index results-file))
-  (define text
-    (or (git* repository "show" (string-append "HEAD:" path))
-        (raise-handoff-error "log/~a has no committed ~a"
-                             log-entry-index
-                             results-file)))
-  (parse-check-run text (string->path path)))
-
-(: find-latest-log-entry (-> String (Listof String) (U Positive-Integer #f)))
-(define (find-latest-log-entry arc paths)
-  (define pattern
-    (pregexp (string-append "^" (regexp-quote arc) "/log/([1-9][0-9]*)$")))
-  (for/fold ([latest : (U Positive-Integer #f) #f])
-            ([path (in-list paths)])
-    (define match (regexp-match pattern path))
-    (define number (and match (string->number (assert (second match)))))
-    (cond
-      [(not (exact-positive-integer? number)) latest]
-      [latest (max latest number)]
-      [else number])))
+(: parse-baseline (-> arc-files (U (Pairof Positive-Integer check-run) #f)))
+(define (parse-baseline files)
+  (match (arc-files-baseline files)
+    [#f #f]
+    [(baseline-files number results)
+     (cons number
+           (parse-check-run
+            (or results
+                (raise-handoff-error "log/~a has no committed ~a"
+                                     number
+                                     results-file))
+            (build-path (arc-files-name files)
+                        log-directory
+                        (number->string number)
+                        results-file)))]))
 
 (struct check-added ([after : check-result]) #:transparent)
 (struct check-removed ([before : check-result]) #:transparent)
@@ -977,9 +981,11 @@
 
 (struct arc-files ([name : String]
                    [texts : (Listof (Pairof String (U String #f)))]
+                   [workflow : (U String #f)]
                    [documents : (Listof (Pairof scope-path (U String #f)))]
                    [log : (U (Listof log-entry-files) #f)]
                    [committed-log : (Listof String)]
+                   [baseline : (U baseline-files #f)]
                    [references : (Listof (Pairof scope-path Boolean))])
   #:transparent)
 
@@ -987,6 +993,10 @@
                          [directory? : Boolean]
                          [entry : (U String #f)]
                          [results : (U String #f)])
+  #:transparent)
+
+(struct baseline-files ([number : Positive-Integer]
+                        [results : (U String #f)])
   #:transparent)
 
 (: read-arc-files (-> Path String arc-files))
@@ -999,9 +1009,20 @@
     (and start-text
          (with-handlers ([exn:fail:handoff? (const #f)])
            (parse-start start-text (build-path name start-file)))))
+  (define project (find-project-repository repository))
+  (define workflow-path
+    (and start*
+         (resolve-scope-path repository name project (start-workflow start*))))
   (define committed
-    (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
-          (string-append name "/" log-directory "/")))
+    (let ([paths (git* repository "ls-tree" "-z" "--name-only" "HEAD" "--"
+                       (string-append name "/" log-directory "/"))])
+      (if paths
+          (for/list : (Listof String)
+                    ([path (in-list (string-split paths "\u0000"))])
+            (define-values (_base entry _directory?) (split-path path))
+            (path->string (assert entry path?)))
+          null)))
+  (define baseline (latest-log-entry committed))
   (arc-files
    name
    (cons (cons start-file start-text)
@@ -1009,6 +1030,9 @@
                    ([file (in-list (cons checks-file state-files))])
            (define path (build-path arc-directory file))
            (cons file (and (file-exists? path) (file->string path)))))
+   (and workflow-path
+        (file-exists? workflow-path)
+        (file->string workflow-path))
    (read-arc-documents repository arc-directory)
    (cond
      [(directory-exists? log-path)
@@ -1025,24 +1049,26 @@
                               (file->string results-path))))]
      [(or (file-exists? log-path) (link-exists? log-path)) #f]
      [else null])
-   (if committed
-       (for/list : (Listof String)
-                 ([path (in-list (string-split committed "\u0000"))])
-         (define-values (_base entry _directory?) (split-path path))
-         (path->string (assert entry path?)))
-       null)
+   committed
+   (and baseline
+        (baseline-files baseline
+                        (git* repository
+                              "show"
+                              (format "HEAD:~a/~a/~a/~a"
+                                      name
+                                      log-directory
+                                      baseline
+                                      results-file))))
    (if start*
-       (let ([project (find-project-repository repository)])
-         (define references
-           (cons (start-workflow start*)
-                 (map read-first-path (start-read-first start*))))
-         (for/list : (Listof (Pairof scope-path Boolean))
-                   ([path (in-list references)])
-           (cons path
-                 (file-exists? (resolve-scope-path repository
-                                                   name
-                                                   project
-                                                   path)))))
+       (for/list : (Listof (Pairof scope-path Boolean))
+                 ([path (in-list (cons (start-workflow start*)
+                                       (map read-first-path
+                                            (start-read-first start*))))])
+         (cons path
+               (file-exists? (resolve-scope-path repository
+                                                 name
+                                                 project
+                                                 path))))
        null)))
 
 (: read-arc-documents (-> Path Path (Listof (Pairof scope-path (U String #f)))))
@@ -1117,7 +1143,7 @@
              <))
      (define committed (filter-map parse-log-entry-name
                                    (arc-files-committed-log files)))
-     (define latest (and (pair? entries) (last entries)))
+     (define latest (latest-log-entry (map log-entry-files-name log*)))
      (define pending (and latest (not (memv latest committed)) latest))
      (arc name start* checks entries pending)]
     [else (raise-arc-errors (reverse errors))]))
@@ -1196,6 +1222,11 @@
                       (string->number name)))
   (and (exact-positive-integer? number) number))
 
+(: latest-log-entry (-> (Listof String) (U Positive-Integer #f)))
+(define (latest-log-entry names)
+  (define numbers (filter-map parse-log-entry-name names))
+  (and (pair? numbers) (apply max numbers)))
+
 ;;; Lint
 
 (define placeholder-check-id "replace-me")
@@ -1263,7 +1294,52 @@
                null)]
             [pending? null]
             [else (list (format "~a: expected a regular file"
-                                (build-path path results-file)))]))])))))
+                                (build-path path results-file)))]))])))
+   (budget-diagnostics files parsed)))
+
+(: budget-diagnostics (-> arc-files arc (Listof String)))
+(define (budget-diagnostics files parsed)
+  (define baseline (arc-files-baseline files))
+  (define sections
+    (inlined-sections
+     files
+     parsed
+     (or (arc-pending parsed)
+         (and baseline (baseline-files-number baseline)))))
+  (define sizes
+    ((inst sort (Pairof String Natural) Natural)
+     (for/list : (Listof (Pairof String Natural))
+               ([section (in-list sections)])
+       (cons (car section)
+             (bytes-length (string->bytes/utf-8 (cdr section)))))
+     >
+     #:key cdr))
+  (define total (apply + (map (inst cdr String Natural) sizes)))
+  (if (> total (* 1000 report-budget))
+      (list (format "~a: the report inlines ~a KB, over the ~a KB budget; largest: ~a"
+                    (arc-name parsed)
+                    (format-kilobytes total)
+                    report-budget
+                    (string-join
+                     (for/list : (Listof String)
+                               ([size (in-list (take sizes
+                                                     (min 3 (length sizes))))])
+                       (format "~a ~a KB"
+                               (car size)
+                               (format-kilobytes (cdr size))))
+                     ", ")))
+      null))
+
+(: format-kilobytes (-> Natural String))
+(define (format-kilobytes bytes)
+  (~r (/ bytes 1000) #:precision '(= 1)))
+
+(: count-errors (-> (Listof String) String))
+(define (count-errors diagnostics)
+  (case (length diagnostics)
+    [(0) "no errors"]
+    [(1) "1 error"]
+    [else (format "~a errors" (length diagnostics))]))
 
 (: log-entry-files<? (-> log-entry-files log-entry-files Boolean))
 (define (log-entry-files<? a b)
@@ -1273,6 +1349,230 @@
     [(and a-number b-number) (< a-number b-number)]
     [(or a-number b-number) (and a-number #t)]
     [else (string<? (log-entry-files-name a) (log-entry-files-name b))]))
+
+;;; The start report
+
+(define report-budget 24) ; in KB of 1000 bytes
+(define commit-limit 20)
+
+(struct project ([path : Path]
+                 [branch : (U String #f)]
+                 [head : (U String #f)]
+                 [history : (U 'unresolvable (Listof String))])
+  #:transparent)
+
+(: read-project (-> Path (U check-run #f) project))
+(define (read-project path baseline)
+  (define head (git* path "rev-parse" "--verify" "--quiet" "HEAD"))
+  (define recorded (and baseline (check-run-head baseline)))
+  (define (commits . [arguments : String *])
+    (string-split (apply git path "log" "--abbrev=12" arguments) "\n"))
+  (define branch (git* path "symbolic-ref" "--quiet" "--short" "HEAD"))
+  (define history 
+    (cond
+      [(not baseline) null]
+      [(and recorded
+            (not (git* path
+                       "cat-file"
+                       "-e"
+                       (string-append recorded "^{commit}"))))
+       'unresolvable]
+      [(and recorded head)
+       (commits "--left-right"
+                "--format=%m %h %s"
+                (string-append recorded "...HEAD"))]
+      [recorded (commits "--format=< %h %s" recorded)]
+      [head (commits "--format=> %h %s" "HEAD")]
+      [else null]))
+  (project path branch head history))
+
+(: inlined-sections (-> arc-files arc (U Positive-Integer #f)
+                        (Listof (Pairof String String))))
+(define (inlined-sections files parsed entry)
+  (: text (-> String (U String #f)))
+  (define (text file)
+    (define found (assoc file (arc-files-texts files)))
+    (and found (cdr found)))
+  (define tasks
+    (let ([text* (text "tasks.md")])
+      (and text*
+           (let-values ([(kept count) (omit-finished-tasks text*)])
+             (if (zero? count)
+                 kept
+                 (format "~a(~a finished task~a left out; they are in arc:tasks.md)\n"
+                         kept
+                         count
+                         (if (= count 1) "" "s")))))))
+  (define log-entry (and entry (find-log-entry files entry)))
+  (filter-map
+   (λ ([section : (Pairof String (U String #f))])
+     (match section
+       [(cons header (? string? text*)) (cons header text*)]
+       [_ #f]))
+   (list (cons "arc:start.toml" (text start-file))
+         (cons "arc:arc.md" (text "arc.md"))
+         (cons (scope-path->string (start-workflow (arc-start parsed)))
+               (arc-files-workflow files))
+         (cons "arc:tasks.md" tasks)
+         (cons "arc:do-not-reopen.md" (text "do-not-reopen.md"))
+         (cons "arc:open-questions.md" (text "open-questions.md"))
+         (cons "arc:review.md" (text "review.md"))
+         (cons (format "arc:~a/~a/~a" log-directory entry entry-file)
+               (and log-entry (log-entry-files-entry log-entry))))))
+
+(: omit-finished-tasks (-> String (Values String Natural)))
+(define (omit-finished-tasks text)
+  (define-values (kept count _omitting?)
+    (for/fold ([kept : (Listof String) null]
+               [count : Natural 0]
+               [omitting? : Boolean #f])
+              ([line (in-list (string-split text "\n" #:trim? #f))])
+      (cond
+        [(regexp-match? #px"^- \\[[xX]\\] " line)
+         (values kept (add1 count) #t)]
+        [(and omitting? (regexp-match? #px"^\\s+\\S" line))
+         (values kept count #t)]
+        [else
+         (values (cons line kept) count #f)])))
+  (values (string-join (reverse kept) "\n") count))
+
+(: find-log-entry (-> arc-files Positive-Integer (U log-entry-files #f)))
+(define (find-log-entry files number)
+  (findf (λ ([entry : log-entry-files])
+           (equal? (log-entry-files-name entry) (number->string number)))
+         (or (arc-files-log files) null)))
+
+(: print-start (-> Path arc-files arc
+                   (U (Pairof Positive-Integer check-run) #f)
+                   (Listof check-result) project (Listof String)
+                   Void))
+(define (print-start repository files parsed baseline results project dirty)
+  (printf "project: ~a\n" (project-path project))
+  (printf "handoff repository: ~a\n" repository)
+  (print-sections (inlined-sections files parsed (and baseline (car baseline))))
+  (print-header "other documents")
+  (print-documents files parsed)
+  (print-header "project")
+  (print-project project baseline)
+  (print-header "handoff repository")
+  (print-handoff-repository (lint files parsed) files parsed dirty)
+  (print-header "checks")
+  (match baseline
+    [(cons number run)
+     (print-comparisons (compare-check-results (check-run-results run) results)
+                        number
+                        (check-run-host run)
+                        (check-run-started run))]
+    [#f
+     (printf "no committed log entry to compare against\n\n")
+     (print-results results)]))
+
+(: print-header (-> String Void))
+(define (print-header name)
+  (printf "\n==> ~a <==\n" name))
+
+(: print-sections (-> (Listof (Pairof String String)) Void))
+(define (print-sections sections)
+  (for ([section (in-list sections)])
+    (define text (cdr section))
+    (print-header (car section))
+    (write-string text)
+    (unless (or (string=? text "") (string-suffix? text "\n"))
+      (newline))))
+
+(: print-documents (-> arc-files arc Void))
+(define (print-documents files parsed)
+  (define workflow (start-workflow (arc-start parsed)))
+  (define documents
+    (filter (λ ([document : (Pairof scope-path (U String #f))])
+              (define text (cdr document))
+              (not (or (equal? (car document) workflow)
+                       (and text (verbatim-copy? text)))))
+            (arc-files-documents files)))
+  (when (empty? documents)
+    (displayln "nothing"))
+  (for ([document (in-list documents)])
+    (define text (cdr document))
+    (define summary
+      (if text (string-join (map string-trim (first-paragraph text))) ""))
+    (printf "- ~a~a\n"
+            (scope-path->string (car document))
+            (if (string=? summary "") "" (string-append ": " summary)))))
+
+(: print-project (-> project (U (Pairof Positive-Integer check-run) #f) Void))
+(define (print-project project baseline)
+  (printf "now: ~a\n" (describe-head (project-branch project)
+                                     (project-head project)))
+  (when baseline
+    (match-define (cons number run) baseline)
+    (define history (project-history project))
+    (: commits (-> String (Listof String) Void))
+    (define (commits heading lines)
+      (displayln heading)
+      (for ([line (in-list (take lines (min commit-limit (length lines))))])
+        (printf "  ~a\n" line))
+      (when (> (length lines) commit-limit)
+        (printf "  and ~a more\n" (- (length lines) commit-limit))))
+    (printf "at log/~a: ~a\n"
+            number
+            (describe-head (check-run-branch run) (check-run-head run)))
+    (unless (equal? (check-run-branch run) (project-branch project))
+      (printf "the branch differs from log/~a\n" number))
+    (cond
+      [(eq? history 'unresolvable)
+       (displayln "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine")]
+      [(empty? history) (displayln "no new commits")]
+      [(ormap (λ ([line : String]) (string-prefix? line "<")) history)
+       (commits (format "history rewritten since log/~a; < marks commits only in the recorded history, > only in the current one:"
+                        number)
+                history)]
+      [else
+       (commits (format "commits since log/~a:" number)
+                (map (λ ([line : String]) (substring line 2)) history))])))
+
+(: describe-head (-> (U String #f) (U String #f) String))
+(define (describe-head branch head)
+  (if head
+      (format "~a at ~a"
+              (or branch "detached")
+              (substring head 0 (min 12 (string-length head))))
+      (format "~a with no commits" (or branch "detached"))))
+
+(: print-handoff-repository (-> (Listof String) arc-files arc (Listof String) Void))
+(define (print-handoff-repository diagnostics files parsed dirty)
+  (printf "lint: ~a\n" (count-errors diagnostics))
+  (for ([diagnostic (in-list diagnostics)])
+    (printf "  ~a\n" diagnostic))
+  (define pending (arc-pending parsed))
+  (cond
+    [pending
+     (define entry (find-log-entry files pending))
+     (define results (and entry (log-entry-files-results entry)))
+     (define run
+       (and results
+            (with-handlers ([exn:fail:handoff? (const #f)])
+              (parse-check-run results (build-path (arc-name parsed)
+                                                   log-directory
+                                                   (number->string pending)
+                                                   results-file)))))
+     (printf "pending log entry: log/~a was begun but not committed, so it is not the baseline\n"
+             pending)
+     (printf "  results: ~a\n"
+             (cond
+               [run (format "recorded on ~a at ~a"
+                            (check-run-host run)
+                            (moment->iso8601 (check-run-started run)))]
+               [results "does not parse; see lint"]
+               [else "none"]))
+     (printf "  entry.md: ~a\n"
+             (if (and entry (log-entry-files-entry entry)) "written" "not written"))]
+    [else (displayln "pending log entry: none")])
+  (cond
+    [(empty? dirty) (displayln "uncommitted: none")]
+    [else
+     (displayln "uncommitted:")
+     (for ([line (in-list dirty)])
+       (printf "  ~a\n" line))]))
 
 ;;; Markdown
 
