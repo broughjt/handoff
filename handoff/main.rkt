@@ -106,8 +106,6 @@
           (simple-form-path
            (or option (find-handoff-repository (current-directory)))))
         (match subcommand
-          ;; TODO: Order the handle-* definitions below and the cases in
-          ;; parse-subcommand in the same order as they appear here
           [(list-subcommand archived?) (handle-list repository archived?)]
           [(start-subcommand arc)
            (handle-start repository (select-arc repository arc))]
@@ -150,6 +148,27 @@
     (displayln arc-name))
   'success)
 
+(: handle-start (-> Path String Status))
+(define (handle-start repository name)
+  (define project-path (find-project-repository repository))
+  (define parsed (read-arc repository project-path name))
+  (cond
+    [(arc? parsed)
+     (define baseline (find-baseline name (arc-log parsed)))
+     (define results (run-checks project-path (arc-checks parsed)))
+     (define project
+       (read-project project-path (and baseline (cdr baseline))))
+     (define dirty
+       (string-split
+        (git repository "--no-optional-locks" "status" "--porcelain")
+        "\n"))
+     (print-start repository parsed baseline results project dirty)
+     'success]
+    [else
+     (for ([message (in-list parsed)])
+       (eprintf "handoff: ~a\n" message))
+     'usage]))
+
 (: handle-check (-> Path String Boolean Status))
 (define (handle-check repository name compare?)
   (define checks (read-checks (build-path repository name checks-file)))
@@ -190,27 +209,6 @@
   (printf "~a: ~a\n" name (count-errors diagnostics))
   (if (empty? diagnostics) 'success 'failure))
 
-(: handle-start (-> Path String Status))
-(define (handle-start repository name)
-  (define project-path (find-project-repository repository))
-  (define parsed (read-arc repository project-path name))
-  (cond
-    [(arc? parsed)
-     (define baseline (find-baseline name (arc-log parsed)))
-     (define results (run-checks project-path (arc-checks parsed)))
-     (define project
-       (read-project project-path (and baseline (cdr baseline))))
-     (define dirty
-       (string-split
-        (git repository "--no-optional-locks" "status" "--porcelain")
-        "\n"))
-     (print-start repository parsed baseline results project dirty)
-     'success]
-    [else
-     (for ([message (in-list parsed)])
-       (eprintf "handoff: ~a\n" message))
-     'usage]))
-
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin repository name)
   (error 'handle-update-begin "unimplemented"))
@@ -219,17 +217,13 @@
 (define (handle-update-commit repository name)
   (error 'handle-update-commit "unimplemented"))
 
-(: handle-workflow-list (-> Status))
-(define (handle-workflow-list)
-  (error 'handle-workflow-list "unimplemented"))
-
-(: handle-guide (-> Status))
-(define (handle-guide)
-  (error 'handle-guide "unimplemented"))
-
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new repository arc workflow)
   (error 'handle-new "unimplemented"))
+
+(: handle-workflow-list (-> Status))
+(define (handle-workflow-list)
+  (error 'handle-workflow-list "unimplemented"))
 
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install repository name)
@@ -238,6 +232,10 @@
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
 (define (handle-workflow-fork repository arc source name)
   (error 'handle-workflow-fork "unimplemented"))
+
+(: handle-guide (-> Status))
+(define (handle-guide)
+  (error 'handle-guide "unimplemented"))
 
 ;;; Repositories
 

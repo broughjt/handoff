@@ -7,12 +7,12 @@
 (provide (struct-out list-subcommand)
          (struct-out start-subcommand)
          (struct-out check-subcommand)
+         (struct-out lint-subcommand)
+         (struct-out update-subcommand)
          (struct-out new-subcommand)
          (struct-out workflow-list-subcommand)
          (struct-out workflow-install-subcommand)
          (struct-out workflow-fork-subcommand)
-         (struct-out lint-subcommand)
-         (struct-out update-subcommand)
          (struct-out guide-subcommand)
          (struct-out invocation)
          parse-arguments)
@@ -33,6 +33,10 @@
 (struct check-subcommand ([arc : (U String #f)]
                           [compare? : Boolean])
   #:transparent)
+(struct lint-subcommand ([arc : (U String #f)]) #:transparent)
+(struct update-subcommand ([step : (U 'begin 'commit)]
+                           [arc : (U String #f)])
+  #:transparent)
 (struct new-subcommand ([arc : String]
                         [workflow : (U String #f)])
   #:transparent)
@@ -41,10 +45,6 @@
 (struct workflow-fork-subcommand ([arc : String]
                                   [source : String]
                                   [name : (U String #f)])
-  #:transparent)
-(struct lint-subcommand ([arc : (U String #f)]) #:transparent)
-(struct update-subcommand ([step : (U 'begin 'commit)]
-                           [arc : (U String #f)])
   #:transparent)
 (struct guide-subcommand () #:transparent)
 
