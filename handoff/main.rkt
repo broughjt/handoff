@@ -154,16 +154,15 @@
   'success)
 
 (: handle-start (-> Path String Status))
-;; TODO: Call `name` `arc-name` here and elsewhere
-(define (handle-start handoff-repository name)
+(define (handle-start handoff-repository arc-name)
   (define project-repository (find-project-repository handoff-repository))
   ;; TODO: Is there a way to do something similar to Rust's `if let Some(...)`
   ;; where we call `parsed` `result` and then bind the name `arc` if it is an
   ;; struct `arc` and `errors` otherwise?
-  (define parsed (read-arc handoff-repository project-repository name))
+  (define parsed (read-arc handoff-repository project-repository arc-name))
   (cond
     [(arc? parsed)
-     (define baseline (find-baseline name (arc-log parsed)))
+     (define baseline (find-baseline arc-name (arc-log parsed)))
      (define results (run-checks project-repository (arc-checks parsed)))
      (define project-status
        (read-project-status project-repository (and baseline (cdr baseline))))
@@ -184,9 +183,9 @@
      'usage]))
 
 (: handle-check (-> Path String Boolean Status))
-(define (handle-check handoff-repository name compare?)
+(define (handle-check handoff-repository arc-name compare?)
   (define checks
-    (read-checks (build-path handoff-repository name checks-file)))
+    (read-checks (build-path handoff-repository arc-name checks-file)))
   (define project-repository (find-project-repository handoff-repository))
   (define results
     (cond
@@ -194,9 +193,10 @@
        ;; Read the baseline first, so that if it is broken, we refuse with an
        ;; error before running the checks.
        (match-define (cons log-entry-index baseline)
-         (or (find-baseline name (car (read-log handoff-repository name)))
+         (or (find-baseline arc-name
+                            (car (read-log handoff-repository arc-name)))
              (raise-handoff-error "~a has no committed log entry to compare against"
-                                  name)))
+                                  arc-name)))
        (define results (run-checks project-repository checks))
        (print-comparisons (compare-check-results (check-run-results baseline)
                                                  results)
@@ -215,27 +215,27 @@
       'failure))
 
 (: handle-lint (-> Path String Status))
-(define (handle-lint handoff-repository name)
+(define (handle-lint handoff-repository arc-name)
   (define parsed
     (read-arc handoff-repository
               (find-project-repository handoff-repository)
-              name))
+              arc-name))
   (define diagnostics (if (arc? parsed) (lint parsed) parsed))
   (for ([diagnostic (in-list diagnostics)])
     (displayln diagnostic))
-  (printf "~a: ~a\n" name (count-errors diagnostics))
+  (printf "~a: ~a\n" arc-name (count-errors diagnostics))
   (if (empty? diagnostics) 'success 'failure))
 
 (: handle-update-begin (-> Path String Status))
-(define (handle-update-begin handoff-repository name)
+(define (handle-update-begin handoff-repository arc-name)
   (error 'handle-update-begin "unimplemented"))
 
 (: handle-update-commit (-> Path String Status))
-(define (handle-update-commit handoff-repository name)
+(define (handle-update-commit handoff-repository arc-name)
   (error 'handle-update-commit "unimplemented"))
 
 (: handle-new (-> Path String (U String #f) Status))
-(define (handle-new handoff-repository arc workflow)
+(define (handle-new handoff-repository arc-name workflow)
   (error 'handle-new "unimplemented"))
 
 (: handle-workflow-list (-> Status))
@@ -247,7 +247,7 @@
   (error 'handle-workflow-install "unimplemented"))
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
-(define (handle-workflow-fork handoff-repository arc source name)
+(define (handle-workflow-fork handoff-repository arc-name source name)
   (error 'handle-workflow-fork "unimplemented"))
 
 (: handle-guide (-> Status))
@@ -311,16 +311,16 @@
         string<?))
 
 (: select-arc (-> Path (U String #f) String))
-(define (select-arc handoff-repository name)
+(define (select-arc handoff-repository arc-name)
   (cond
-    [name
-     (unless (regexp-match? arc-name-regex name)
+    [arc-name
+     (unless (regexp-match? arc-name-regex arc-name)
        (raise-handoff-error "specify a top-level arc directory name"))
-     (unless (directory-exists? (build-path handoff-repository name))
+     (unless (directory-exists? (build-path handoff-repository arc-name))
        (raise-handoff-error "~a is not a directory in ~a"
-                            name
+                            arc-name
                             handoff-repository))
-     name]
+     arc-name]
     [else
      (define arcs (list-arcs handoff-repository))
      (cond
@@ -840,8 +840,8 @@
 
 ;; Either the arc, or the error of every file that does not parse.
 (: read-arc (-> Path Path String (U arc (Listof String))))
-(define (read-arc handoff-repository project-repository name)
-  (define directory (build-path handoff-repository name))
+(define (read-arc handoff-repository project-repository arc-name)
+  (define directory (build-path handoff-repository arc-name))
   (define errors : (Listof String) null)
   (: attempt (All (A) (-> (-> A) (U A #f))))
   (define (attempt read)
@@ -860,16 +860,19 @@
                 (if (file-exists? path)
                     (file->string path)
                     (raise-handoff-error "~a: expected a regular file"
-                                         (build-path name file))))))))
+                                         (build-path arc-name file))))))))
   (define start-text (hash-ref texts start-file))
   (define start*
     (and start-text
-         (attempt (thunk (parse-start start-text (build-path name start-file))))))
+         (attempt
+          (thunk (parse-start start-text (build-path arc-name start-file))))))
   (define checks-text (hash-ref texts checks-file))
   (define checks
     (and checks-text
-         (attempt (thunk (parse-checks checks-text (build-path name checks-file))))))
-  (define log* (attempt (thunk (read-log handoff-repository name))))
+         (attempt
+          (thunk (parse-checks checks-text
+                               (build-path arc-name checks-file))))))
+  (define log* (attempt (thunk (read-log handoff-repository arc-name))))
   (cond
     [(and start* checks log* (empty? errors))
      (match-define (cons entries invalid-log-entries) log*)
@@ -879,7 +882,7 @@
          (values file (assert (hash-ref texts file) string?))))
      (define workflow-path
        (resolve-scope-path handoff-repository
-                           name
+                           arc-name
                            project-repository
                            (start-workflow start*)))
      (define workflow-text
@@ -888,14 +891,14 @@
        (filter-not (λ ([path : scope-path])
                      (file-exists?
                       (resolve-scope-path handoff-repository
-                                          name
+                                          arc-name
                                           project-repository
                                           path)))
                    (cons (start-workflow start*)
                          (map read-first-path (start-read-first start*)))))
      (define other-documents
        (read-arc-other-documents handoff-repository directory))
-     (arc name
+     (arc arc-name
           start*
           checks
           state-texts
@@ -907,12 +910,12 @@
     [else (reverse errors)]))
 
 (: read-log (-> Path String (Pairof (Listof log-entry) (Listof String))))
-(define (read-log handoff-repository name)
-  (define directory (build-path handoff-repository name log-directory))
+(define (read-log handoff-repository arc-name)
+  (define directory (build-path handoff-repository arc-name log-directory))
   (define committed
     (let ([paths (git* handoff-repository
                        "ls-tree" "-z" "--name-only" "HEAD" "--"
-                       (string-append name "/" log-directory "/"))])
+                       (string-append arc-name "/" log-directory "/"))])
       (if paths
           (for/list : (Listof String)
                     ([path (in-list (string-split paths "\u0000"))])
@@ -933,7 +936,7 @@
                     (and (file-exists? results-path)
                          (with-handlers ([exn:fail:handoff? exn-message])
                            (parse-check-run (file->string results-path)
-                                            (build-path name
+                                            (build-path arc-name
                                                         log-directory
                                                         entry
                                                         results-file)))))))
@@ -946,7 +949,7 @@
            (filter-not read-entry entries))]
     [(or (file-exists? directory) (link-exists? directory))
      (raise-handoff-error "~a: expected a directory"
-                          (build-path name log-directory))]
+                          (build-path arc-name log-directory))]
     [else (cons null null)]))
 
 (: read-arc-other-documents (-> Path Path (Listof (Pairof scope-path (U String #f)))))
@@ -988,7 +991,7 @@
 ;; repository. This means a pending entry is never the baseline.
 (: find-baseline (-> String (Listof log-entry)
                      (U (Pairof Positive-Integer check-run) #f)))
-(define (find-baseline name entries)
+(define (find-baseline arc-name entries)
   (define entry (find-last-committed-log-entry entries))
   (define results (and entry (log-entry-results entry)))
   (cond
@@ -996,7 +999,7 @@
     [(check-run? results) (cons (log-entry-number entry) results)]
     [(string? results) (raise-handoff-error "~a" results)]
     [else (raise-handoff-error "~a: expected a regular file"
-                               (build-path name
+                               (build-path arc-name
                                            log-directory
                                            (number->string
                                             (log-entry-number entry))
@@ -1081,18 +1084,17 @@
 
 (: lint (-> arc (Listof String)))
 (define (lint parsed)
-  (define name (arc-name parsed))
   (define pending (find-pending-log-entry (arc-log parsed)))
   (append
    (for/list : (Listof String) ([path (in-list (arc-missing-references parsed))])
      (format "~a: ~a is not a regular file"
-             (build-path name start-file)
+             (build-path (arc-name parsed) start-file)
              (scope-path->string path)))
    (for/list : (Listof String)
              ([check (in-list (arc-checks parsed))]
               #:when (equal? (check-id check) placeholder-check-id))
      (format "~a: check ~a is the placeholder from handoff new; replace it with the arc's checks"
-             (build-path name checks-file)
+             (build-path (arc-name parsed) checks-file)
              placeholder-check-id))
    (for*/list : (Listof String)
               ([document (in-list (arc-other-documents parsed))]
@@ -1104,12 +1106,12 @@
      (define path (car document))
      (format "~a: ~a"
              (if (eq? (scope-path-scope path) 'arc)
-                 (build-path name (scope-path-path path))
+                 (build-path (arc-name parsed) (scope-path-path path))
                  (scope-path-path path))
              issue))
    (append*
     (for/list : (Listof (Listof String)) ([entry (in-list (arc-log parsed))])
-      (define path (build-path name
+      (define path (build-path (arc-name parsed)
                                log-directory
                                (number->string (log-entry-number entry))))
       (define pending? (eq? entry pending))
@@ -1133,7 +1135,7 @@
      (format (if (parse-log-entry-name stray)
                  "~a: expected a directory"
                  "~a: expected a log entry number, a positive integer without leading zeros")
-             (build-path name log-directory stray)))
+             (build-path (arc-name parsed) log-directory stray)))
    (budget-diagnostics parsed)))
 
 (: budget-diagnostics (-> arc (Listof String)))
