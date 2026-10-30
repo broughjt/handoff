@@ -341,7 +341,8 @@
 
 (: handle-lint (-> Path String Status))
 (define (handle-lint repository name)
-  (define parsed (read-arc repository name))
+  (define parsed
+    (read-arc repository (find-project-repository repository) name))
   (define diagnostics (if (arc? parsed) (lint parsed) parsed))
   (for ([diagnostic (in-list diagnostics)])
     (displayln diagnostic))
@@ -351,13 +352,14 @@
 (: handle-start (-> Path String Status))
 (define (handle-start repository* name)
   (define repository (simple-form-path repository*))
-  (define parsed (read-arc repository name))
+  (define project-path (find-project-repository repository))
+  (define parsed (read-arc repository project-path name))
   (cond
     [(arc? parsed)
      (define baseline (find-baseline name (arc-log parsed)))
-     (define results (run-checks (arc-project parsed) (arc-checks parsed)))
+     (define results (run-checks project-path (arc-checks parsed)))
      (define project
-       (read-project (arc-project parsed) (and baseline (cdr baseline))))
+       (read-project project-path (and baseline (cdr baseline))))
      (define dirty
        (string-split
         (git repository "--no-optional-locks" "status" "--porcelain")
@@ -960,7 +962,6 @@
 (define entry-file "entry.md")
 
 (struct arc ([name : String]
-             [project : Path]
              [start : start]
              [checks : (Listof check)]
              [state-texts : (Immutable-HashTable String String)]
@@ -980,10 +981,9 @@
   #:transparent)
 
 ;; Either the arc, or the error of every file that does not parse.
-(: read-arc (-> Path String (U arc (Listof String))))
-(define (read-arc repository name)
+(: read-arc (-> Path Path String (U arc (Listof String))))
+(define (read-arc repository project name)
   (define directory (build-path repository name))
-  (define project (find-project-repository repository))
   (define errors : (Listof String) null)
   (: attempt (All (A) (-> (-> A) (U A #f))))
   (define (attempt read)
@@ -1031,7 +1031,6 @@
                          (map read-first-path (start-read-first start*)))))
      (define other-documents (read-arc-other-documents repository directory))
      (arc name
-          project
           start*
           checks
           state-texts

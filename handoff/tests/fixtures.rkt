@@ -20,7 +20,6 @@
 
 (define clean
   (arc "a"
-       (string->path "/p")
        (start "n"
               (scope-path 'arc (string->path "workflow.md"))
               (list (read-first (scope-path 'project (string->path "src/main.rkt"))
