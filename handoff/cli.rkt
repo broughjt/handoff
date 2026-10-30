@@ -62,16 +62,13 @@
    #:usage-help
    "Commands:"
    "  list      list handoff arcs"
-   ;; TODO: Improve wording. How?
-   "  start     get a brief for starting work on a handoff arc"
+   "  start     print the report for resuming an arc"
    "  check     run the commands in checks.toml and report their results"
    "  lint      validate the expected structure of a handoff arc"
-   ;; TODO: Should we remove past the colon, since the helps for the update
-   ;; subcommand describes them?
-   "  update    record a log entry: --begin runs the checks and records them, --commit commits"
+   "  update    record a log entry"
    "  new       create an arc"
    "  workflow  list, install, or fork reusable workflows"
-   "  guide     print the usage guide"
+   "  guide     print the path of the handoff guide"
    #:once-each
    [("--repository") path
                      "Handoff repository to use instead of the nearest .scratch/handoff/"
