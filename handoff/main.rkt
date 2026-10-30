@@ -544,20 +544,15 @@
   (define source-string (path->string source))
   (define table (read-toml text source-string))
   (expect-fields table null (list 'check) source-string)
-  (define checks
-    (for/list : (Listof check)
-              ([entry (in-list (check-tables table source-string))]
-               [index (in-naturals)])
-      (define context (format "~a: check[~a]" source-string index))
-      (expect-fields entry check-fields check-optional-fields context)
-      (table->check entry context)))
-  (define duplicate ((inst check-duplicates check String) checks
-                                                          #:key check-id))
-  (when duplicate
-    (raise-handoff-error "~a: check ~a appears more than once"
-                         source-string
-                         (check-id duplicate)))
-  checks)
+  (parse-check-tables table
+                      source-string
+                      (λ ([entry : Table] [context : String])
+                        (expect-fields entry
+                                       check-fields
+                                       check-optional-fields
+                                       context)
+                        (table->check entry context))
+                      check-id))
 
 (: parse-check-run (-> String Path check-run))
 (define (parse-check-run text source)
@@ -571,24 +566,17 @@
   (expect-fields run (list 'host 'started 'duration) null run-context)
   (expect-fields project null (list 'branch 'head) project-context)
   (define results
-    (for/list : (Listof check-result)
-              ([entry (in-list (check-tables table source-string))]
-               [index (in-naturals)])
-      (define context (format "~a: check[~a]" source-string index))
-      (expect-fields entry
-                     (append check-fields observation-fields)
-                     (append check-optional-fields observation-optional-fields)
-                     context)
-      (check-result (table->check entry context)
-                    (table->check-observation entry context))))
-  (define duplicate
-    ((inst check-duplicates check-result String)
-     results
-     #:key (compose1 check-id check-result-check)))
-  (when duplicate
-    (raise-handoff-error "~a: check ~a appears more than once"
-                         source-string
-                         (check-id (check-result-check duplicate))))
+    (parse-check-tables
+     table
+     source-string
+     (λ ([entry : Table] [context : String])
+       (expect-fields entry
+                      (append check-fields observation-fields)
+                      (append check-optional-fields observation-optional-fields)
+                      context)
+       (check-result (table->check entry context)
+                     (table->check-observation entry context)))
+     (compose1 check-id check-result-check)))
   (check-run (expect-string run 'host run-context)
              (expect-datetime run 'started run-context)
              (expect-seconds run 'duration run-context)
@@ -598,14 +586,23 @@
                   (expect-string project 'head project-context))
              results))
 
-(: check-tables (-> Table String (Listof Table)))
-(define (check-tables table source)
+(: parse-check-tables (All (A) (-> Table String (-> Table String A) (-> A String)
+                                   (Listof A))))
+(define (parse-check-tables table source parse id)
   (define entries (hash-ref table 'check (const null)))
   (unless (list? entries)
     (raise-handoff-error "~a: check must be an array of tables" source))
-  (for/list : (Listof Table) ([entry (in-list entries)]
-                              [index (in-naturals)])
-    (expect-table entry (format "~a: check[~a]" source index))))
+  (define parsed
+    (for/list : (Listof A) ([entry (in-list entries)]
+                            [index (in-naturals)])
+      (define context (format "~a: check[~a]" source index))
+      (parse (expect-table entry context) context)))
+  (define duplicate ((inst check-duplicates A String) parsed #:key id))
+  (when duplicate
+    (raise-handoff-error "~a: check ~a appears more than once"
+                         source
+                         (id duplicate)))
+  parsed)
 
 (: table->check (-> Table String check))
 (define (table->check table context)
