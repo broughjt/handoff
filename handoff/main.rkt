@@ -203,8 +203,8 @@
 (: parse-subcommand (-> String (Listof String) Subcommand))
 (define (parse-subcommand subcommand arguments)
   (define program (string-append "handoff " subcommand))
-  (: parse-arc-argument (-> String (Listof String) (U String #f)))
-  (define (parse-arc-argument program arguments)
+  (: parse-arc-argument (-> (U String #f)))
+  (define (parse-arc-argument)
     (command-line
      #:program program
      #:argv arguments
@@ -220,7 +220,7 @@
       [("--archived") "List archived arcs instead" (set! archived? #t)]
       #:args ()
       (list-subcommand archived?))]
-    [("start") (start-subcommand (parse-arc-argument program arguments))]
+    [("start") (start-subcommand (parse-arc-argument))]
     [("check")
      (define compare? : Boolean #f)
      (command-line
@@ -231,7 +231,7 @@
                      (set! compare? #t)]
       #:args ([arc #f])
       (check-subcommand (and arc (assert arc string?)) compare?))]
-    [("lint") (lint-subcommand (parse-arc-argument program arguments))]
+    [("lint") (lint-subcommand (parse-arc-argument))]
     [("update")
      (define step : (U 'begin 'commit #f) #f)
      (command-line
