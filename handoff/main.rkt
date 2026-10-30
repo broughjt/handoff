@@ -156,12 +156,8 @@
 (: handle-start (-> Path String Status))
 (define (handle-start handoff-repository arc-name)
   (define project-repository (find-project-repository handoff-repository))
-  ;; TODO: Is there a way to do something similar to Rust's `if let Some(...)`
-  ;; where we call `parsed` `result` and then bind the name `arc` if it is an
-  ;; struct `arc` and `errors` otherwise?
-  (define parsed (read-arc handoff-repository project-repository arc-name))
-  (cond
-    [(arc? parsed)
+  (match (read-arc handoff-repository project-repository arc-name)
+    [(? arc? parsed)
      (define baseline (find-baseline arc-name (arc-log parsed)))
      (define results (run-checks project-repository (arc-checks parsed)))
      (define project-status
@@ -177,8 +173,8 @@
                   project-status
                   dirty)
      'success]
-    [else
-     (for ([message (in-list parsed)])
+    [(? list? errors)
+     (for ([message (in-list errors)])
        (eprintf "handoff: ~a\n" message))
      'usage]))
 
