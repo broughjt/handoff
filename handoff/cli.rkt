@@ -80,102 +80,138 @@
                (parse-subcommand (assert subcommand string?)
                                  (map (λ (a) (assert a string?)) arguments)))))
 
-;; TODO: Make parse-*-subcommand helpers per subcommand here
 (: parse-subcommand (-> String (Listof String) Subcommand))
 (define (parse-subcommand subcommand arguments)
   (define program (string-append "handoff " subcommand))
-  (: parse-arc-argument (-> (U String #f)))
-  (define (parse-arc-argument)
-    (command-line
-     #:program program
-     #:argv arguments
-     #:args ([arc #f])
-     (and arc (assert arc string?))))
   (case subcommand
-    [("list")
-     (define archived? : Boolean #f)
-     (command-line
-      #:program program
-      #:argv arguments
-      #:once-each
-      [("--archived") "List archived arcs instead" (set! archived? #t)]
-      #:args ()
-      (list-subcommand archived?))]
-    [("start") (start-subcommand (parse-arc-argument))]
-    [("check")
-     (define compare? : Boolean #f)
-     (command-line
-      #:program program
-      #:argv arguments
-      #:once-each
-      [("--compare") "Compare the results with those of the last handoff"
-                     (set! compare? #t)]
-      #:args ([arc #f])
-      (check-subcommand (and arc (assert arc string?)) compare?))]
-    [("lint") (lint-subcommand (parse-arc-argument))]
-    [("update")
-     (define step : (U 'begin 'commit #f) #f)
-     (command-line
-      #:program program
-      #:argv arguments
-      #:once-any
-      [("--begin") "Run the checks and record their results in a pending log entry"
-                   (set! step 'begin)]
-      [("--commit") "Commit the pending log entry once its entry.md is written"
-                    (set! step 'commit)]
-      #:args ([arc #f])
-      (update-subcommand
-       (or step (raise-handoff-error "update requires --begin or --commit"))
-       (and arc (assert arc string?))))]
-    [("new")
-     (command-line
-      #:program program
-      #:argv arguments
-      #:help-labels
-      "<workflow> is a name from handoff workflow list"
-      #:args (arc [workflow #f])
-      (new-subcommand (assert arc string?)
-                      (and workflow (assert workflow string?))))]
-    [("workflow")
-     (command-line
-      #:program program
-      #:argv arguments
-      #:usage-help
-      "Commands:"
-      ;; TODO: What is a "reusable" workflow as opposed to a "workflow file"?
-      ;; TODO: Why not:
-      ;; list workflows
-      ;; copy a workflow verbatim to the root of the handoff repository
-      ;; copy a workflow to the root of the handoff repository so it can be modified
-      "  list                 list the reusable workflows"
-      "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
-      "  fork <arc> <source> [<name>]  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
-      #:args (verb . verb-arguments)
-      (let* ([verb (assert verb string?)]
-             [arguments (map (λ (a) (assert a string?)) verb-arguments)]
-             [program (string-append program " " verb)])
-        (case verb
-          [("list")
-           (command-line #:program program #:argv arguments #:args ()
-                         (workflow-list-subcommand))]
-          [("install")
-           (command-line #:program program #:argv arguments #:args (name)
-                         (workflow-install-subcommand (assert name string?)))]
-          [("fork")
-           (command-line #:program program #:argv arguments
-                         #:help-labels
-                         "<source> is either a workflow name or a reference like handoff:workflow-x.md"
-                         "<name> defaults to the source's name"
-                         #:args (arc source [name #f])
-                         (workflow-fork-subcommand
-                          (assert arc string?)
-                          (assert source string?)
-                          (and name (assert name string?))))]
-          [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork"
-                                     verb)])))]
-    [("guide") (command-line #:program program
-                             #:argv arguments
-                             #:args ()
-                             (guide-subcommand))]
+    [("list") (parse-list-subcommand program arguments)]
+    [("start") (parse-start-subcommand program arguments)]
+    [("check") (parse-check-subcommand program arguments)]
+    [("lint") (parse-lint-subcommand program arguments)]
+    [("update") (parse-update-subcommand program arguments)]
+    [("new") (parse-new-subcommand program arguments)]
+    [("workflow") (parse-workflow-subcommand program arguments)]
+    [("guide") (parse-guide-subcommand program arguments)]
     [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
                                subcommand)]))
+
+(: parse-arc-argument (-> String (Listof String) (U String #f)))
+(define (parse-arc-argument program arguments)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:args ([arc #f])
+   (and arc (assert arc string?))))
+
+(: parse-list-subcommand (-> String (Listof String) list-subcommand))
+(define (parse-list-subcommand program arguments)
+  (define archived? : Boolean #f)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:once-each
+   [("--archived") "List archived arcs instead" (set! archived? #t)]
+   #:args ()
+   (list-subcommand archived?)))
+
+(: parse-start-subcommand (-> String (Listof String) start-subcommand))
+(define (parse-start-subcommand program arguments)
+  (start-subcommand (parse-arc-argument program arguments)))
+
+(: parse-check-subcommand (-> String (Listof String) check-subcommand))
+(define (parse-check-subcommand program arguments)
+  (define compare? : Boolean #f)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:once-each
+   [("--compare") "Compare the results with those of the last handoff"
+                  (set! compare? #t)]
+   #:args ([arc #f])
+   (check-subcommand (and arc (assert arc string?)) compare?)))
+
+(: parse-lint-subcommand (-> String (Listof String) lint-subcommand))
+(define (parse-lint-subcommand program arguments)
+  (lint-subcommand (parse-arc-argument program arguments)))
+
+(: parse-update-subcommand (-> String (Listof String) update-subcommand))
+(define (parse-update-subcommand program arguments)
+  (define step : (U 'begin 'commit #f) #f)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:once-any
+   [("--begin") "Run the checks and record their results in a pending log entry"
+                (set! step 'begin)]
+   [("--commit") "Commit the pending log entry once its entry.md is written"
+                 (set! step 'commit)]
+   #:args ([arc #f])
+   (update-subcommand
+    (or step (raise-handoff-error "update requires --begin or --commit"))
+    (and arc (assert arc string?)))))
+
+(: parse-new-subcommand (-> String (Listof String) new-subcommand))
+(define (parse-new-subcommand program arguments)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:help-labels
+   "<workflow> is a name from handoff workflow list"
+   #:args (arc [workflow #f])
+   (new-subcommand (assert arc string?)
+                   (and workflow (assert workflow string?)))))
+
+(: parse-workflow-subcommand (-> String (Listof String) Subcommand))
+(define (parse-workflow-subcommand program arguments)
+  (command-line
+   #:program program
+   #:argv arguments
+   #:usage-help
+   "Commands:"
+   ;; TODO: What is a "reusable" workflow as opposed to a "workflow file"?
+   ;; TODO: Why not:
+   ;; list workflows
+   ;; copy a workflow verbatim to the root of the handoff repository
+   ;; copy a workflow to the root of the handoff repository so it can be modified
+   "  list                 list the reusable workflows"
+   "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
+   "  fork <arc> <source> [<name>]  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"
+   #:args (verb . verb-arguments)
+   (let* ([verb (assert verb string?)]
+          [arguments (map (λ (a) (assert a string?)) verb-arguments)]
+          [program (string-append program " " verb)])
+     (case verb
+       [("list") (parse-workflow-list-subcommand program arguments)]
+       [("install") (parse-workflow-install-subcommand program arguments)]
+       [("fork") (parse-workflow-fork-subcommand program arguments)]
+       [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork"
+                                  verb)]))))
+
+(: parse-workflow-list-subcommand (-> String (Listof String) workflow-list-subcommand))
+(define (parse-workflow-list-subcommand program arguments)
+  (command-line #:program program #:argv arguments #:args ()
+                (workflow-list-subcommand)))
+
+(: parse-workflow-install-subcommand (-> String (Listof String) workflow-install-subcommand))
+(define (parse-workflow-install-subcommand program arguments)
+  (command-line #:program program #:argv arguments #:args (name)
+                (workflow-install-subcommand (assert name string?))))
+
+(: parse-workflow-fork-subcommand (-> String (Listof String) workflow-fork-subcommand))
+(define (parse-workflow-fork-subcommand program arguments)
+  (command-line #:program program #:argv arguments
+                #:help-labels
+                "<source> is either a workflow name or a reference like handoff:workflow-x.md"
+                "<name> defaults to the source's name"
+                #:args (arc source [name #f])
+                (workflow-fork-subcommand
+                 (assert arc string?)
+                 (assert source string?)
+                 (and name (assert name string?)))))
+
+(: parse-guide-subcommand (-> String (Listof String) guide-subcommand))
+(define (parse-guide-subcommand program arguments)
+  (command-line #:program program
+                #:argv arguments
+                #:args ()
+                (guide-subcommand)))
