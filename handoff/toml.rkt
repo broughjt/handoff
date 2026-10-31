@@ -12,11 +12,13 @@
 
 (require/typed gregor
   [#:opaque Moment moment?]
-  [moment->iso8601 (-> Moment String)])
+  [moment->iso8601 (-> Moment String)]
+  [posix->moment (-> Real Integer Moment)])
 
 (provide Table
          Moment
          moment->iso8601
+         posix->moment
          read-toml
          expect-fields
          expect-table

@@ -93,6 +93,16 @@
 (test-case "no log entry is pending when the highest is committed"
   (check-false (find-pending-log-entry (arc-log clean))))
 
+(test-case "the first log entry is 1"
+  (check-equal? (next-log-entry-number null) 1))
+
+(test-case "the next log entry is one past the highest when none is pending"
+  (check-equal? (next-log-entry-number (arc-log clean)) 3))
+
+(test-case "the next log entry is the pending one"
+  (check-equal? (next-log-entry-number (list (log-entry 1 #t "# First\n" run) (log-entry 2 #f #f #f)))
+                2))
+
 (test-case "the baseline is the highest committed log entry"
   (check-true (equal? (find-baseline "a" (list (log-entry 1 #t "# First\n" run) (log-entry 2 #f #f #f)))
                       (cons 1 run))))

@@ -20,7 +20,11 @@
   [(alarm-evt monotonic-alarm-evt) (-> Real True (Evtof Any))])
 
 (require/typed racket/file
+  [call-with-atomic-output-file (-> Path-String (-> Output-Port Path Void) Void)]
   [make-temporary-directory (-> Path)])
+
+(require/typed racket/os
+  [gethostname (-> String)])
 
 (module signal racket/base
   (require ffi/unsafe)
@@ -59,6 +63,7 @@
          parse-log-entry-name
          find-last-committed-log-entry
          find-pending-log-entry
+         next-log-entry-number
          find-baseline
          lint
          (struct-out project-status)
@@ -73,7 +78,8 @@
          (struct-out checks-compared)
          (struct-out checks-uncompared)
          build-start-report
-         print-start)
+         print-start
+         commit-subject-or-refuse)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -160,21 +166,14 @@
      (define check-results (run-checks project-repository (arc-checks arc)))
      (define project-status
        (read-project-status project-repository (and baseline (cdr baseline))))
-     (define dirty
-       (string-split
-        (git handoff-repository "--no-optional-locks" "status" "--porcelain")
-        "\n"))
      (print-start (build-start-report handoff-repository
                                       arc
                                       baseline
                                       check-results
                                       project-status
-                                      dirty))
+                                      (read-dirty handoff-repository)))
      'success]
-    [(? list? errors)
-     (for ([message (in-list errors)])
-       (eprintf "handoff: ~a\n" message))
-     'usage]))
+    [(? list? errors) (refuse-arc-errors arc-name errors)]))
 
 (: handle-check (-> Path String Boolean Status))
 (define (handle-check handoff-repository arc-name compare?)
@@ -223,11 +222,59 @@
 
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin handoff-repository arc-name)
-  (error 'handle-update-begin "unimplemented"))
+  (define project-repository (find-project-repository handoff-repository))
+  (define arc (read-arc-and-lint handoff-repository project-repository arc-name))
+  (define baseline (find-baseline arc-name (arc-log arc)))
+  (define-values (branch head) (read-project-head project-repository))
+  (define started (posix->moment (current-seconds) 0))
+  (define clock (current-inexact-monotonic-milliseconds))
+  (define check-results (run-checks project-repository (arc-checks arc)))
+  (define duration
+    (milliseconds->seconds
+     (max 0.0 (- (current-inexact-monotonic-milliseconds) clock))))
+  ;; The entry's directory is created only once the checks have run, so that
+  ;; an interrupted run leaves nothing behind.
+  (define log-entry-number (next-log-entry-number (arc-log arc)))
+  (define directory (build-path handoff-repository
+                                arc-name
+                                log-directory
+                                (number->string log-entry-number)))
+  (make-directory* directory)
+  (define results-path (build-path directory results-file))
+  (call-with-atomic-output-file
+   results-path
+   (λ ([out : Output-Port] [_ : Path])
+     (parameterize ([current-output-port out])
+       (write-check-run
+        (check-run (gethostname)
+                   started
+                   duration
+                   branch
+                   head
+                   check-results)))))
+  (print-checks (compare-with-baseline baseline check-results))
+  (printf "\nrecorded: ~a\n" results-path)
+  (printf "entry: ~a\n" (build-path directory entry-file))
+  'success)
 
 (: handle-update-commit (-> Path String Status))
 (define (handle-update-commit handoff-repository arc-name)
-  (error 'handle-update-commit "unimplemented"))
+  (define project-repository (find-project-repository handoff-repository))
+  (define arc (read-arc-and-lint handoff-repository project-repository arc-name))
+  (define-values (branch head) (read-project-head project-repository))
+  (define subject (commit-subject-or-refuse arc branch head))
+  ;; Fails on an unmerged index, which could not be committed anyway.
+  (define index (git handoff-repository "write-tree"))
+  (with-handlers ([exn:fail? (λ ([error : exn])
+                               (git* handoff-repository "read-tree" index)
+                               (raise error))])
+    (git handoff-repository "add" "-A" "--" arc-name)
+    (git handoff-repository "commit" "--quiet" "--message" subject))
+  (printf "committed: ~a ~a\n"
+          (git handoff-repository "rev-parse" "--short=12" "HEAD")
+          subject)
+  (print-dirty (read-dirty handoff-repository))
+  'success)
 
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new handoff-repository arc-name workflow)
@@ -891,6 +938,16 @@
           invalid-log-entries)]
     [else (reverse errors)]))
 
+(: refuse-arc-errors (-> String (Listof String) Nothing))
+(define (refuse-arc-errors arc-name messages)
+  (raise-handoff-error "~a has ~a; fix them first:\n~a"
+                       arc-name
+                       (count-errors messages)
+                       (string-join (map (λ ([message : String])
+                                           (string-append "  " message))
+                                         messages)
+                                    "\n")))
+
 (: read-log (-> Path String (Pairof (Listof log-entry) (Listof String))))
 (define (read-log handoff-repository arc-name)
   (define directory (build-path handoff-repository arc-name log-directory))
@@ -968,6 +1025,12 @@
   (and (pair? entries)
        (not (log-entry-committed? (last entries)))
        (last entries)))
+
+(: next-log-entry-number (-> (Listof log-entry) Positive-Integer))
+(define (next-log-entry-number entries)
+  (match (find-pending-log-entry entries)
+    [(? log-entry? pending) (log-entry-number pending)]
+    [#f (if (empty? entries) 1 (add1 (log-entry-number (last entries))))]))
 
 ;; The baseline is the highest-numbered log entry committed to the handoff
 ;; repository. This means a pending entry is never the baseline.
@@ -1175,8 +1238,7 @@
 
 (: read-project-status (-> Path (U check-run #f) project-status))
 (define (read-project-status project-repository baseline)
-  (define head
-    (git* project-repository "rev-parse" "--verify" "--quiet" "HEAD"))
+  (define-values (branch head) (read-project-head project-repository))
   (define recorded (and baseline (check-run-head baseline)))
   (: commits (-> (U String #f) (U String #f) (Listof String)))
   (define (commits from to)
@@ -1188,8 +1250,6 @@
                            (if from (string-append from ".." to) to))
                       "\n")
         null))
-  (define branch
-    (git* project-repository "symbolic-ref" "--quiet" "--short" "HEAD"))
   (project-status project-repository
                   branch
                   head
@@ -1203,6 +1263,17 @@
                      'unresolvable]
                     [else (history (commits head recorded)
                                    (commits recorded head))])))
+
+(: read-project-head (-> Path (Values (U String #f) (U String #f))))
+(define (read-project-head project-repository)
+  (values (git* project-repository "symbolic-ref" "--quiet" "--short" "HEAD")
+          (git* project-repository "rev-parse" "--verify" "--quiet" "HEAD")))
+
+(: read-dirty (-> Path (Listof String)))
+(define (read-dirty handoff-repository)
+  (string-split
+   (git handoff-repository "--no-optional-locks" "status" "--porcelain")
+   "\n"))
 
 (: inlined-sections (-> arc (U log-entry #f) (Listof (Pairof String String))))
 (define (inlined-sections arc entry)
@@ -1292,14 +1363,20 @@
    (lint arc)
    (find-pending-log-entry (arc-log arc))
    dirty
-   (match baseline
-     [(cons log-entry-number run)
-      (checks-compared log-entry-number
-                       (check-run-host run)
-                       (check-run-started run)
-                       (compare-check-results (check-run-results run)
-                                              check-results))]
-     [#f (checks-uncompared check-results)])))
+   (compare-with-baseline baseline check-results)))
+
+(: compare-with-baseline (-> (U (Pairof Positive-Integer check-run) #f)
+                             (Listof check-result)
+                             Report-Checks))
+(define (compare-with-baseline baseline check-results)
+  (match baseline
+    [(cons log-entry-number run)
+     (checks-compared log-entry-number
+                      (check-run-host run)
+                      (check-run-started run)
+                      (compare-check-results (check-run-results run)
+                                             check-results))]
+    [#f (checks-uncompared check-results)]))
 
 (: other-documents (-> arc (Listof (Pairof scope-path String))))
 (define (other-documents arc)
@@ -1331,7 +1408,11 @@
                             (start-report-pending report)
                             (start-report-dirty report))
   (print-header "checks")
-  (match (start-report-checks report)
+  (print-checks (start-report-checks report)))
+
+(: print-checks (-> Report-Checks Void))
+(define (print-checks checks)
+  (match checks
     [(checks-compared log-entry-number host started comparisons)
      (print-comparisons comparisons log-entry-number host started)]
     [(checks-uncompared check-results)
@@ -1426,12 +1507,59 @@
      (printf "  entry.md: ~a\n"
              (if (log-entry-text pending) "written" "not written"))]
     [else (displayln "pending log entry: none")])
+  (print-dirty dirty))
+
+(: print-dirty (-> (Listof String) Void))
+(define (print-dirty dirty)
   (cond
     [(empty? dirty) (displayln "uncommitted: none")]
     [else
      (displayln "uncommitted:")
      (for ([line (in-list dirty)])
        (printf "  ~a\n" line))]))
+
+;;; Updates
+
+(: read-arc-and-lint (-> Path Path String arc))
+(define (read-arc-and-lint handoff-repository project-repository arc-name)
+  (match (read-arc handoff-repository project-repository arc-name)
+    [(? arc? arc)
+     (define diagnostics (lint arc))
+     (if (empty? diagnostics) arc (refuse-arc-errors arc-name diagnostics))]
+    [(? list? errors) (refuse-arc-errors arc-name errors)]))
+
+(: commit-subject-or-refuse (-> arc (U String #f) (U String #f) String))
+(define (commit-subject-or-refuse arc branch head)
+  (define pending
+    (or (find-pending-log-entry (arc-log arc))
+        (raise-handoff-error "~a has no pending log entry; run handoff update --begin first"
+                             (arc-name arc))))
+  (define path (build-path (arc-name arc)
+                           log-directory
+                           (number->string (log-entry-number pending))))
+  (define text (log-entry-text pending))
+  (define run (log-entry-run pending))
+  (define headline (and text (entry-headline text)))
+  (cond
+    [(not text)
+     (raise-handoff-error "~a: write the entry first" (build-path path entry-file))]
+    [(not headline)
+     (raise-handoff-error "~a: expected a heading on its first nonblank line"
+                          (build-path path entry-file))]
+    [(not (check-run? run))
+     (raise-handoff-error "~a: expected a regular file; run handoff update --begin"
+                          (build-path path results-file))]
+    [(not (equal? (arc-checks arc)
+                  (map check-result-check (check-run-results run))))
+     (raise-handoff-error "~a: the checks changed since the results were recorded; run handoff update --begin again"
+                          (build-path (arc-name arc) checks-file))]
+    [(not (and (equal? branch (check-run-branch run))
+               (equal? head (check-run-head run))))
+     (raise-handoff-error "the project moved from ~a to ~a since ~a was recorded; run handoff update --begin again"
+                          (describe-head (check-run-branch run) (check-run-head run))
+                          (describe-head branch head)
+                          (build-path path results-file))]
+    [else (format "~a: ~a" (arc-name arc) headline)]))
 
 ;;; Markdown
 
