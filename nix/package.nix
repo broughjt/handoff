@@ -51,10 +51,11 @@ stdenvNoCC.mkDerivation {
   '';
 
   # The script calls git commands and runs user checks under bash. It finds
-  # workflow patterns in each $XDG_DATA_DIRS/handoff/workflows/, after the
-  # user's own, and HANDOFF.md, the concepts the skills share, at the first
-  # $XDG_DATA_DIRS/handoff/HANDOFF.md, so the wrapper puts the package's own
-  # share directory first among those.
+  # reusable workflows in $XDG_DATA_HOME/handoff/workflows/ and then each
+  # $XDG_DATA_DIRS/handoff/workflows/, and HANDOFF.md, the concepts the skills
+  # share, at the first handoff/HANDOFF.md in the same directories, so the
+  # wrapper puts the package's own share directory first among
+  # $XDG_DATA_DIRS.
   installPhase = ''
     runHook preInstall
     cp -r dist $out
