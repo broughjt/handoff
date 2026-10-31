@@ -78,3 +78,5 @@ With `go`, the session is unattended. Begin the `next` action under its workflow
 - A discrepancy needs the user's call, including lint errors and missing references.
 - A pending entry exists.
 - `next` would need a different workflow, or a change to the current one. An unattended session leaves the workflow as it is (see *Decisions and provenance* in HANDOFF.md).
+
+With `go`, record a handoff with the handoff-update skill once you have finished your work.
