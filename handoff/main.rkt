@@ -92,7 +92,8 @@
          build-start-report
          print-start
          commit-subject-or-refuse
-         references-into-arc
+         (struct-out external-reference)
+         external-references-to-arc
          closing-tag-or-refuse
          workflow-name?
          workflow-copy-name
@@ -151,7 +152,8 @@
            (handle-update-commit handoff-repository
                                  (select-arc handoff-repository arc))]
           [(close-subcommand arc)
-           (handle-close handoff-repository arc)]
+           (handle-close handoff-repository
+                         (select-arc handoff-repository arc))]
           [(new-subcommand arc workflow)
            (handle-new handoff-repository arc workflow)]
           [(workflow-install-subcommand name)
@@ -304,9 +306,6 @@
 
 (: handle-close (-> Path String Status))
 (define (handle-close handoff-repository arc-name)
-  (unless (and (regexp-match? arc-name-regex arc-name)
-               (arc-directory? (build-path handoff-repository arc-name)))
-    (raise-handoff-error "~a is not an arc in ~a" arc-name handoff-repository))
   (define tag
     (closing-tag-or-refuse
      arc-name
@@ -317,7 +316,8 @@
                    "\n")
      (string-split (git handoff-repository "diff" "--cached" "--name-only")
                    "\n")
-     (references-into-arc arc-name (read-other-starts handoff-repository arc-name))
+     (external-references-to-arc arc-name
+                                 (read-other-starts handoff-repository arc-name))
      (and (git* handoff-repository
                 "rev-parse" "--verify" "--quiet"
                 (string-append "refs/tags/" closed-tag-prefix arc-name))
@@ -346,7 +346,7 @@
 
 (: handle-new (-> Path String (U String #f) Status))
 (define (handle-new handoff-repository arc-name workflow-name)
-  (unless (regexp-match? arc-name-regex arc-name)
+  (unless (arc-name? arc-name)
     (raise-handoff-error "specify a top-level arc directory name"))
   (define directory (build-path handoff-repository arc-name))
   (when (file-or-directory-type directory)
@@ -506,17 +506,25 @@
 
 (define closed-tag-prefix "closed/")
 
-(: arc-directory? (-> Path Boolean))
-(define (arc-directory? path)
-  (and (directory-exists? path) (file-exists? (build-path path start-file))))
+(: arc-name? (-> String Boolean))
+(define (arc-name? name)
+  (regexp-match? arc-name-regex name))
+
+(: arc-directory? (-> Path String Boolean))
+(define (arc-directory? handoff-repository arc-name)
+  (define directory (build-path handoff-repository arc-name))
+  (and (arc-name? arc-name)
+       (directory-exists? directory)
+       (file-exists? (build-path directory start-file))))
 
 (: list-arcs (-> Path (Listof String)))
 (define (list-arcs handoff-repository)
   ;; Note: `directory-list` sorts by `path<?`.
-  (for/list : (Listof String)
-            ([entry (in-list (directory-list handoff-repository))]
-             #:when (arc-directory? (build-path handoff-repository entry)))
-    (path->string entry)))
+  (for*/list : (Listof String)
+             ([entry (in-list (directory-list handoff-repository))]
+              [arc-name (in-value (path->string entry))]
+              #:when (arc-directory? handoff-repository arc-name))
+    arc-name))
 
 (: list-closed-arcs (-> Path (Listof String)))
 (define (list-closed-arcs handoff-repository)
@@ -532,12 +540,8 @@
 (define (select-arc handoff-repository arc-name)
   (cond
     [arc-name
-     (unless (regexp-match? arc-name-regex arc-name)
-       (raise-handoff-error "specify a top-level arc directory name"))
-     (unless (directory-exists? (build-path handoff-repository arc-name))
-       (raise-handoff-error "~a is not a directory in ~a"
-                            arc-name
-                            handoff-repository))
+     (unless (arc-directory? handoff-repository arc-name)
+       (raise-handoff-error "~a is not an arc in ~a" arc-name handoff-repository))
      arc-name]
     [else
      (define arcs (list-arcs handoff-repository))
@@ -1752,33 +1756,47 @@
     (cons other
           (parse-start (file->string (build-path handoff-repository path)) path))))
 
-;; Each reference in another arc's start.toml to a file inside the arc.
-(: references-into-arc (-> String (Listof (Pairof String start)) (Listof String)))
-(define (references-into-arc arc-name others)
+(struct external-reference ([arc-name : String]
+                            [field : (U 'workflow 'read-first)]
+                            [path : scope-path])
+  #:transparent)
+
+(: external-references-to-arc (-> String (Listof (Pairof String start))
+                                  (Listof external-reference)))
+(define (external-references-to-arc arc-name others)
   (: into-arc? (-> scope-path Boolean))
   (define (into-arc? path)
     (and (eq? (scope-path-scope path) 'handoff)
          (equal? (car (explode-path (scope-path-path path)))
                  (string->path arc-name))))
-  (for*/list : (Listof String)
+  (for*/list : (Listof external-reference)
              ([other (in-list others)]
-              [field (in-list
-                      (cons (cons "workflow" (start-workflow (cdr other)))
-                            (map (λ ([read : read-first])
-                                   (cons "read-first" (read-first-path read)))
-                                 (start-read-first (cdr other)))))]
-              #:when (into-arc? (cdr field)))
-    (format "~a: ~a ~a"
-            (build-path (car other) start-file)
-            (car field)
-            (scope-path->string (cdr field)))))
+              [reference
+               (in-list
+                (cons (external-reference (car other)
+                                          'workflow
+                                          (start-workflow (cdr other)))
+                      (map (λ ([read : read-first])
+                             (external-reference (car other)
+                                                 'read-first
+                                                 (read-first-path read)))
+                           (start-read-first (cdr other)))))]
+              #:when (into-arc? (external-reference-path reference)))
+    reference))
 
-;; `handoff close`'s refusals, as a function of the arc's log, the lines of
-;; `git status` under the arc, the staged paths, the references into the arc
-;; from other arcs, and whether the tag exists.
-(: closing-tag-or-refuse (-> String (Listof log-entry) (Listof String) (Listof String)
-                             (Listof String) Boolean String))
-(define (closing-tag-or-refuse arc-name entries dirty staged references tag-exists?)
+(: closing-tag-or-refuse (-> String
+                             (Listof log-entry)
+                             (Listof String)
+                             (Listof String)
+                             (Listof external-reference)
+                             Boolean
+                             String))
+(define (closing-tag-or-refuse arc-name
+                               entries
+                               dirty
+                               staged
+                               external-references
+                               tag-exists?)
   (define tag (string-append closed-tag-prefix arc-name))
   (: indent (-> (Listof String) String))
   (define (indent lines)
@@ -1786,10 +1804,11 @@
   (cond
     [(find-pending-log-entry entries)
      => (λ ([pending : log-entry])
-          (raise-handoff-error "~a has a pending log entry; commit it with handoff update --commit or remove it first"
-                               (build-path arc-name
-                                           log-directory
-                                           (number->string (log-entry-number pending)))))]
+          (raise-handoff-error
+           "~a has a pending log entry; commit it with handoff update --commit or remove it first"
+           (build-path arc-name
+                       log-directory
+                       (number->string (log-entry-number pending)))))]
     [(not (find-last-committed-log-entry entries))
      (raise-handoff-error "~a has no committed log entry; record the closing handoff first"
                           arc-name)]
@@ -1800,10 +1819,18 @@
     [(pair? staged)
      (raise-handoff-error "the index has staged changes; commit or unstage them first:\n~a"
                           (indent staged))]
-    [(pair? references)
+    [(pair? external-references)
      (raise-handoff-error "other arcs refer to files in ~a; change their start.toml first:\n~a"
                           arc-name
-                          (indent references))]
+                          (indent
+                           (for/list : (Listof String)
+                                     ([reference (in-list external-references)])
+                             (format "~a: ~a ~a"
+                                     (build-path (external-reference-arc-name reference)
+                                                 start-file)
+                                     (external-reference-field reference)
+                                     (scope-path->string
+                                      (external-reference-path reference))))))]
     [tag-exists? (raise-handoff-error "the tag ~a already exists" tag)]
     [else tag]))
 

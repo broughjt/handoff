@@ -69,7 +69,7 @@
    "  check     run the commands in checks.toml and report their results"
    "  lint      validate the expected structure of a handoff arc"
    "  update    record a log entry"
-   "  close     tag an arc's last handoff and remove the arc"
+   "  close     close an arc"
    "  new       create an arc"
    "  workflow  list, install, or fork reusable workflows"
    "  guide     print the path of the handoff guide"
