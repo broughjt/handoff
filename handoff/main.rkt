@@ -23,8 +23,10 @@
   [(alarm-evt monotonic-alarm-evt) (-> Real True (Evtof Any))])
 
 (require/typed racket/file
-  [call-with-atomic-output-file (-> Path-String (-> Output-Port Path Void) Void)]
-  [make-temporary-directory (->* () (String #:base-dir (U Path-String #f)) Path)])
+  [call-with-atomic-output-file
+   (-> Path-String (-> Output-Port Path Void) Void)]
+  [make-temporary-directory
+   (->* () (String #:base-dir (U Path-String #f)) Path)])
 
 (require/typed basedir
   [list-data-dirs
@@ -216,8 +218,9 @@
        (match-define (cons log-entry-number baseline)
          (or (find-baseline arc-name
                             (car (read-log handoff-repository arc-name)))
-             (raise-handoff-error "~a has no committed log entry to compare against"
-                                  arc-name)))
+             (raise-handoff-error
+              "~a has no committed log entry to compare against"
+              arc-name)))
        (define check-results (run-checks project-repository checks))
        (print-comparisons (compare-check-results (check-run-results baseline)
                                                  check-results)
@@ -251,7 +254,9 @@
 (: handle-update-begin (-> Path String Status))
 (define (handle-update-begin handoff-repository arc-name)
   (define project-repository (find-project-repository handoff-repository))
-  (define arc (read-arc-and-lint handoff-repository project-repository arc-name))
+  (define arc (read-arc-and-lint handoff-repository
+                                 project-repository
+                                 arc-name))
   (define baseline (find-baseline arc-name (arc-log arc)))
   (define-values (branch head) (read-project-head project-repository))
   (define started (posix->moment (current-seconds) 0))
@@ -288,7 +293,9 @@
 (: handle-update-commit (-> Path String Status))
 (define (handle-update-commit handoff-repository arc-name)
   (define project-repository (find-project-repository handoff-repository))
-  (define arc (read-arc-and-lint handoff-repository project-repository arc-name))
+  (define arc (read-arc-and-lint handoff-repository
+                                 project-repository
+                                 arc-name))
   (define-values (branch head) (read-project-head project-repository))
   (define subject (commit-subject-or-refuse arc branch head))
   ;; Fails on an unmerged index, which could not be committed anyway.
@@ -316,8 +323,8 @@
                    "\n")
      (string-split (git handoff-repository "diff" "--cached" "--name-only")
                    "\n")
-     (external-references-to-arc arc-name
-                                 (read-other-starts handoff-repository arc-name))
+     (external-references-to-arc arc-name (read-other-starts handoff-repository
+                                                             arc-name))
      (and (git* handoff-repository
                 "rev-parse" "--verify" "--quiet"
                 (string-append "refs/tags/" closed-tag-prefix arc-name))
@@ -329,18 +336,23 @@
   (git handoff-repository
        "tag" "--annotate" "--message" (format "~a: closed" arc-name) tag target)
   (with-handlers ([exn:fail? (λ ([error : exn])
-                               (git* handoff-repository "checkout" "HEAD" "--" arc-name)
+                               (git* handoff-repository
+                                     "checkout" "HEAD" "--" arc-name)
                                (git* handoff-repository "tag" "--delete" tag)
                                (raise error))])
     (git handoff-repository "rm" "-r" "--quiet" "--" arc-name)
     (git handoff-repository "commit" "--quiet" "--message" subject))
   (printf "tagged: ~a at ~a\n"
           tag
-          (git handoff-repository "log" "-1" "--format=%h %s" "--abbrev=12" target))
+          (git handoff-repository
+               "log" "-1" "--format=%h %s" "--abbrev=12" target))
   (printf "committed: ~a ~a\n"
           (git handoff-repository "rev-parse" "--short=12" "HEAD")
           subject)
-  (printf "read with: git -C ~a show ~a:~a/<file>\n" handoff-repository tag arc-name)
+  (printf "read with: git -C ~a show ~a:~a/<file>\n"
+          handoff-repository
+          tag
+          arc-name)
   (print-dirty (read-dirty handoff-repository))
   'success)
 
@@ -379,7 +391,8 @@
   (printf "created: ~a/\n" arc-name)
   (printf "files: ~a\n" (string-join (map (inst car String String) files) ", "))
   (when workflow
-    (print-workflow-install workflow (install-workflow handoff-repository workflow)))
+    (print-workflow-install workflow
+                            (install-workflow handoff-repository workflow)))
   (define diagnostics
     (match (read-arc handoff-repository project-repository arc-name)
       [(? arc? arc) (lint arc)]
@@ -398,7 +411,8 @@
      (printf "no reusable workflows in ~a\n"
              (string-join (map path->string directories) ", "))]
     [else
-     (displayln "search order; install, fork and new take the first workflow with a name")
+     (displayln
+      "search order; install, fork and new take the first workflow with a name")
      (for ([workflow (in-list workflows)])
        (define path (reusable-workflow-path workflow))
        (newline)
@@ -410,7 +424,8 @@
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install handoff-repository name)
   (define workflow (find-reusable-workflow name))
-  (print-workflow-install workflow (install-workflow handoff-repository workflow))
+  (print-workflow-install workflow
+                          (install-workflow handoff-repository workflow))
   'success)
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
@@ -437,8 +452,9 @@
     (raise-handoff-error "~a is not a regular file" source))
   (define workflow-name (or name (workflow-fork-name found)))
   (unless (workflow-name? workflow-name)
-    (raise-handoff-error "~a is not a workflow name: lowercase letters, digits and hyphens; give one as <name>"
-                         workflow-name))
+    (raise-handoff-error
+     "~a is not a workflow name: lowercase letters, digits and hyphens; give one as <name>"
+     workflow-name))
   (define file (workflow-copy-name workflow-name))
   (define path (build-path handoff-repository arc-name file))
   (when (file-or-directory-type path)
@@ -449,10 +465,11 @@
     (split-workflow-provenance (bytes->string/utf-8 contents #\uFFFD)))
   (call-with-output-file path
     (λ ([out : Output-Port])
-      (write-string (format-workflow-provenance-line 'forked
-                                                     description
-                                                     contents
-                                                     (posix->moment (current-seconds) 0))
+      (write-string (format-workflow-provenance-line
+                     'forked
+                     description
+                     contents
+                     (posix->moment (current-seconds) 0))
                     out)
       (write-string text out)
       (void))
@@ -466,10 +483,10 @@
   (match (list-data-files guide-file #:program program-name)
     [(cons path _) (displayln path)]
     ['()
-     (raise-handoff-error "no ~a in ~a"
-                          guide-file
-                          (string-join (map path->string (handoff-data-directories))
-                                       ", "))])
+     (raise-handoff-error
+      "no ~a in ~a"
+      guide-file
+      (string-join (map path->string (handoff-data-directories)) ", "))])
   'success)
 
 ;;; Repositories
@@ -541,7 +558,9 @@
   (cond
     [arc-name
      (unless (arc-directory? handoff-repository arc-name)
-       (raise-handoff-error "~a is not an arc in ~a" arc-name handoff-repository))
+       (raise-handoff-error "~a is not an arc in ~a"
+                            arc-name
+                            handoff-repository))
      arc-name]
     [else
      (define arcs (list-arcs handoff-repository))
@@ -668,7 +687,10 @@
                   (expect-nonempty-string project 'head project-context))
              check-results))
 
-(: parse-check-tables (All (A) (-> Table String (-> Table String A) (-> A String)
+(: parse-check-tables (All (A) (-> Table
+                                   String
+                                   (-> Table String A)
+                                   (-> A String)
                                    (Listof A))))
 (define (parse-check-tables table source parse id)
   (define parsed (expect-tables table 'check source parse))
@@ -1162,9 +1184,10 @@
   (cond
     [(directory-exists? directory)
      (define entries (map path->string (directory-list directory)))
-     (cons ((inst sort log-entry Positive-Integer) (filter-map read-entry entries)
-                                                   <
-                                                   #:key log-entry-number)
+     (cons ((inst sort log-entry Positive-Integer)
+            (filter-map read-entry entries)
+            <
+            #:key log-entry-number)
            (filter-not read-entry entries))]
     [(or (file-exists? directory) (link-exists? directory))
      (raise-handoff-error "~a: expected a directory"
@@ -1262,9 +1285,10 @@
 (define (expect-scope-path table key context)
   (define text (expect-nonempty-string table key context))
   (or (parse-scope-path text)
-      (raise-handoff-error "~a: ~a must be arc:, handoff: or project: followed by a relative path without .."
-                           context
-                           key)))
+      (raise-handoff-error
+       "~a: ~a must be arc:, handoff: or project: followed by a relative path without .."
+       context
+       key)))
 
 (: parse-scope-path (-> String (U scope-path #f)))
 (define (parse-scope-path text)
@@ -1307,8 +1331,9 @@
   (define pending (find-pending-log-entry (arc-log arc)))
   (append
    (if (equal? (start-next (arc-start arc)) placeholder)
-       (list (format "~a: next is the placeholder from handoff new; write the arc's next action"
-                     (build-path (arc-name arc) start-file)))
+       (list (format
+              "~a: next is the placeholder from handoff new; write the arc's next action"
+              (build-path (arc-name arc) start-file)))
        null)
    (for/list : (Listof String) ([path (in-list (arc-missing-references arc))])
      (format "~a: ~a is not a regular file"
@@ -1317,9 +1342,10 @@
    (for/list : (Listof String)
              ([check (in-list (arc-checks arc))]
               #:when (equal? (check-id check) placeholder))
-     (format "~a: check ~a is the placeholder from handoff new; replace it with the arc's checks"
-             (build-path (arc-name arc) checks-file)
-             placeholder))
+     (format
+      "~a: check ~a is the placeholder from handoff new; replace it with the arc's checks"
+      (build-path (arc-name arc) checks-file)
+      placeholder))
    (for*/list : (Listof String)
               ([document (in-list (arc-documents arc))]
                [issue (in-value (let ([text (cdr document)])
@@ -1378,18 +1404,16 @@
      #:key cdr))
   (define total (apply + (map (inst cdr String Natural) sizes)))
   (if (> total (* 1000 report-budget))
-      (list (format "~a: the report inlines ~a KB, over the ~a KB budget; largest: ~a"
-                    (arc-name arc)
-                    (format-kilobytes total)
-                    report-budget
-                    (string-join
-                     (for/list : (Listof String)
-                               ([size (in-list (take sizes
-                                                     (min 3 (length sizes))))])
-                       (format "~a ~a KB"
-                               (car size)
-                               (format-kilobytes (cdr size))))
-                     ", ")))
+      (list (format
+             "~a: the report inlines ~a KB, over the ~a KB budget; largest: ~a"
+             (arc-name arc)
+             (format-kilobytes total)
+             report-budget
+             (string-join
+              (for/list : (Listof String)
+                        ([size (in-list (take sizes (min 3 (length sizes))))])
+                (format "~a ~a KB" (car size) (format-kilobytes (cdr size))))
+              ", ")))
       null))
 
 (: format-kilobytes (-> Natural String))
@@ -1475,10 +1499,11 @@
          (cons "arc:tasks.md"
                (if (zero? count)
                    tasks
-                   (format "~a(~a finished task~a left out; they are in arc:tasks.md)\n"
-                           tasks
-                           count
-                           (if (= count 1) "" "s"))))
+                   (format
+                    "~a(~a finished task~a left out; they are in arc:tasks.md)\n"
+                    tasks
+                    count
+                    (if (= count 1) "" "s"))))
          (cons "arc:do-not-reopen.md" (text "do-not-reopen.md"))
          (cons "arc:open-questions.md" (text "open-questions.md"))
          (cons "arc:review.md" (text "review.md"))
@@ -1649,13 +1674,15 @@
       (printf "the branch differs from log/~a\n" log-entry-number))
     (match (project-status-history project-status)
       ['unresolvable
-       (displayln "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine")]
+       (displayln
+        "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine")]
       [(history '() '()) (displayln "no new commits")]
       [(history '() only-current)
        (commits (format "commits since log/~a:" log-entry-number) only-current)]
       [(history only-recorded only-current)
-       (commits (format "history rewritten since log/~a; < marks commits only in the recorded history, > only in the current one:"
-                        log-entry-number)
+       (commits (format
+                 "history rewritten since log/~a; < marks commits only in the recorded history, > only in the current one:"
+                 log-entry-number)
                 (append (map (λ ([line : String]) (string-append "< " line))
                              only-recorded)
                         (map (λ ([line : String]) (string-append "> " line))
@@ -1678,8 +1705,9 @@
   (cond
     [pending
      (define run (log-entry-run pending))
-     (printf "pending log entry: log/~a was begun but not committed, so it is not the baseline\n"
-             (log-entry-number pending))
+     (printf
+      "pending log entry: log/~a was begun but not committed, so it is not the baseline\n"
+      (log-entry-number pending))
      (printf "  results: ~a\n"
              (cond
                [(check-run? run)
@@ -1716,8 +1744,9 @@
 (define (commit-subject-or-refuse arc branch head)
   (define pending
     (or (find-pending-log-entry (arc-log arc))
-        (raise-handoff-error "~a has no pending log entry; run handoff update --begin first"
-                             (arc-name arc))))
+        (raise-handoff-error
+         "~a has no pending log entry; run handoff update --begin first"
+         (arc-name arc))))
   (define path (build-path (arc-name arc)
                            log-directory
                            (number->string (log-entry-number pending))))
@@ -1726,23 +1755,27 @@
   (define headline (and text (entry-headline text)))
   (cond
     [(not text)
-     (raise-handoff-error "~a: write the entry first" (build-path path entry-file))]
+     (raise-handoff-error "~a: write the entry first"
+                          (build-path path entry-file))]
     [(not headline)
      (raise-handoff-error "~a: expected a heading on its first nonblank line"
                           (build-path path entry-file))]
     [(not (check-run? run))
-     (raise-handoff-error "~a: expected a regular file; run handoff update --begin"
-                          (build-path path results-file))]
+     (raise-handoff-error
+      "~a: expected a regular file; run handoff update --begin"
+      (build-path path results-file))]
     [(not (equal? (arc-checks arc)
                   (map check-result-check (check-run-results run))))
-     (raise-handoff-error "~a: the checks changed since the results were recorded; run handoff update --begin again"
-                          (build-path (arc-name arc) checks-file))]
+     (raise-handoff-error
+      "~a: the checks changed since the results were recorded; run handoff update --begin again"
+      (build-path (arc-name arc) checks-file))]
     [(not (and (equal? branch (check-run-branch run))
                (equal? head (check-run-head run))))
-     (raise-handoff-error "the project moved from ~a to ~a since ~a was recorded; run handoff update --begin again"
-                          (describe-head (check-run-branch run) (check-run-head run))
-                          (describe-head branch head)
-                          (build-path path results-file))]
+     (raise-handoff-error
+      "the project moved from ~a to ~a since ~a was recorded; run handoff update --begin again"
+      (describe-head (check-run-branch run) (check-run-head run))
+      (describe-head branch head)
+      (build-path path results-file))]
     [else (format "~a: ~a" (arc-name arc) headline)]))
 
 ;;; Closing arcs
@@ -1754,7 +1787,8 @@
              #:unless (equal? other arc-name))
     (define path (build-path other start-file))
     (cons other
-          (parse-start (file->string (build-path handoff-repository path)) path))))
+          (parse-start (file->string (build-path handoff-repository path))
+                       path))))
 
 (struct external-reference ([arc-name : String]
                             [field : (U 'workflow 'read-first)]
@@ -1800,7 +1834,8 @@
   (define tag (string-append closed-tag-prefix arc-name))
   (: indent (-> (Listof String) String))
   (define (indent lines)
-    (string-join (map (λ ([line : String]) (string-append "  " line)) lines) "\n"))
+    (string-join (map (λ ([line : String]) (string-append "  " line)) lines)
+                 "\n"))
   (cond
     [(find-pending-log-entry entries)
      => (λ ([pending : log-entry])
@@ -1810,27 +1845,30 @@
                        log-directory
                        (number->string (log-entry-number pending)))))]
     [(not (find-last-committed-log-entry entries))
-     (raise-handoff-error "~a has no committed log entry; record the closing handoff first"
-                          arc-name)]
+     (raise-handoff-error
+      "~a has no committed log entry; record the closing handoff first"
+      arc-name)]
     [(pair? dirty)
-     (raise-handoff-error "~a has uncommitted changes; commit or remove them first:\n~a"
-                          arc-name
-                          (indent dirty))]
+     (raise-handoff-error
+      "~a has uncommitted changes; commit or remove them first:\n~a"
+      arc-name
+      (indent dirty))]
     [(pair? staged)
-     (raise-handoff-error "the index has staged changes; commit or unstage them first:\n~a"
-                          (indent staged))]
+     (raise-handoff-error
+      "the index has staged changes; commit or unstage them first:\n~a"
+      (indent staged))]
     [(pair? external-references)
-     (raise-handoff-error "other arcs refer to files in ~a; change their start.toml first:\n~a"
-                          arc-name
-                          (indent
-                           (for/list : (Listof String)
-                                     ([reference (in-list external-references)])
-                             (format "~a: ~a ~a"
-                                     (build-path (external-reference-arc-name reference)
-                                                 start-file)
-                                     (external-reference-field reference)
-                                     (scope-path->string
-                                      (external-reference-path reference))))))]
+     (raise-handoff-error
+      "other arcs refer to files in ~a; change their start.toml first:\n~a"
+      arc-name
+      (indent
+       (for/list : (Listof String)
+                 ([reference (in-list external-references)])
+         (format "~a: ~a ~a"
+                 (build-path (external-reference-arc-name reference)
+                             start-file)
+                 (external-reference-field reference)
+                 (scope-path->string (external-reference-path reference))))))]
     [tag-exists? (raise-handoff-error "the tag ~a already exists" tag)]
     [else tag]))
 
@@ -1876,8 +1914,9 @@
   (or (findf (λ ([workflow : reusable-workflow])
                (equal? (reusable-workflow-name workflow) name))
              (read-reusable-workflows (workflow-directories)))
-      (raise-handoff-error "no reusable workflow named ~a; see handoff workflow list"
-                           name)))
+      (raise-handoff-error
+       "no reusable workflow named ~a; see handoff workflow list"
+       name)))
 
 (: workflow-name? (-> String Boolean))
 (define (workflow-name? name)
@@ -1899,7 +1938,8 @@
 (define (workflow-copy-name name)
   (string-append "workflow-" name ".md"))
 
-(define-type Workflow-Install-Outcome (U 'installed 'unchanged 'changed 'not-verbatim))
+(define-type Workflow-Install-Outcome
+  (U 'installed 'unchanged 'changed 'not-verbatim))
 
 (: install-workflow (-> Path reusable-workflow Workflow-Install-Outcome))
 (define (install-workflow handoff-repository workflow)
@@ -1914,17 +1954,19 @@
     [else
      (call-with-output-file path
        (λ ([out : Output-Port])
-         (write-string (format-workflow-provenance-line 'copied
-                                                        (format "workflow ~a" name)
-                                                        contents
-                                                        (posix->moment (current-seconds) 0))
+         (write-string (format-workflow-provenance-line
+                        'copied
+                        (format "workflow ~a" name)
+                        contents
+                        (posix->moment (current-seconds) 0))
                        out)
          (write-bytes contents out)
          (void))
        #:exists 'error)
      'installed]))
 
-(: workflow-install-status (-> String Bytes (U 'unchanged 'changed 'not-verbatim)))
+(: workflow-install-status
+   (-> String Bytes (U 'unchanged 'changed 'not-verbatim)))
 (define (workflow-install-status copy contents)
   (define-values (provenance _text) (split-workflow-provenance copy))
   (cond
@@ -1958,7 +2000,8 @@
                              [hash : (U String #f)]) ; #f for created
   #:transparent)
 
-(: format-workflow-provenance-line (-> (U 'copied 'forked) String Bytes Moment String))
+(: format-workflow-provenance-line
+   (-> (U 'copied 'forked) String Bytes Moment String))
 (define (format-workflow-provenance-line how source contents now)
   (format "<!-- ~a from ~a (sha256:~a) on ~a~a -->\n"
           how
@@ -1967,9 +2010,12 @@
           (~t (adjust-timezone now 0) "yyyy-MM-dd")
           (if (eq? how 'copied) "; verbatim" "")))
 
-(: split-workflow-provenance (-> String (Values (U workflow-provenance #f) String)))
+(: split-workflow-provenance
+   (-> String (Values (U workflow-provenance #f) String)))
 (define (split-workflow-provenance text)
-  (match (regexp-match #px"^<!-- (copied|forked|created) ([^\n]*)-->(?:\n|$)" text)
+  (match (regexp-match
+          #px"^<!-- (copied|forked|created) ([^\n]*)-->(?:\n|$)"
+          text)
     [(list line (? string? how) (? string? details))
      (define hash (regexp-match #px"\\(sha256:([0-9a-f]{64})\\)" details))
      (values (workflow-provenance (case how
@@ -1992,16 +2038,21 @@
    "# Each check is a claim about the project and a command that acts as a\n"
    "# mechanical decision procedure for the claim. Checks run in parallel and\n"
    "# are reported in file order.\n"
-   "# The `timeout` field is measured in seconds; it is optional and defaults to\n"
+   "# The `timeout` field is measured in seconds; it is optional and "
+   "defaults to\n"
    "# " (toml-number default-timeout) ".\n"
    "[[check]]\n"
    "id = " (toml-string placeholder) "\n"
-   "claim = " (toml-string "A natural language claim that is either true or false") "\n"
-   "command = " (toml-string
-                 (string-append
-                  "echo \"Replace this placeholder from handoff new with the arc's checks. "
-                  "command is a shell command, run from the project root, that exits 0 when "
-                  "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
+   "claim = "
+   (toml-string "A natural language claim that is either true or false")
+   "\n"
+   "command = "
+   (toml-string
+    (string-append
+     "echo \"Replace this placeholder from handoff new with the arc's checks. "
+     "command is a shell command, run from the project root, that exits 0 "
+     "when the claim is true, 1 when it is false, and anything else when "
+     "unknown.\"; exit 3"))
    "\n"
    "timeout = " (toml-number default-timeout) "\n"))
 
