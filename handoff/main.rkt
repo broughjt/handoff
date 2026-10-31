@@ -1450,6 +1450,11 @@
          (values kept (add1 count) #t)]
         [(and omitting? (regexp-match? #px"^\\s+\\S" line))
          (values kept count #t)]
+        [(and omitting?
+              (string=? (string-trim line) "")
+              (pair? kept)
+              (string=? (string-trim (first kept)) ""))
+         (values kept count #t)]
         [else
          (values (cons line kept) count #f)])))
   (values (string-join (reverse kept) "\n") count))

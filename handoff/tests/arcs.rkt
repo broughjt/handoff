@@ -221,6 +221,14 @@
   (check-equal? (omit "# Tasks\n\n- [ ] Open\n")
                 (cons "# Tasks\n\n- [ ] Open\n" 0)))
 
+(test-case "a blank line left beside another where finished tasks were left out is dropped"
+  (check-equal? (omit "### Tests\n\n- [x] Done\n\n### Rewrite\n")
+                (cons "### Tests\n\n### Rewrite\n" 1)))
+
+(test-case "blank lines not left beside each other by leaving out tasks are kept"
+  (check-equal? (omit "# Tasks\n\n\n- [ ] Open\n- [x] Done\n\n## Next\n")
+                (cons "# Tasks\n\n\n- [ ] Open\n\n## Next\n" 1)))
+
 (test-case "a task checked with a capital X is finished"
   (check-equal? (omit "- [X] Done\n") (cons "" 1)))
 
