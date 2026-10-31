@@ -66,14 +66,14 @@ Skip this step in an unattended session (begun with `handoff-start go`) or when 
 
 Otherwise, interview the user with the structured question tool (if it exists, otherwise directly in chat), covering:
 
-- every line you are recording as `(user, ...)`, so the user can check your reading of what they said
+- every line you are recording with a user tag, so the user can check your reading of what they said
 - every new proposal `next` depends on
 - every check newly specified as a task's done-when
 - every workflow change: adopting, creating, or switching a workflow, or changing user or agent roles
 
 If the session showed friction that a different way of working could remove (see *Workflows* in HANDOFF.md), and you have not raised it already, propose a change to the workflow in this round.
 
-Answers become `(user, date)` provenance tags. Refusals become edits to your log entry and the arc files. Anything left unanswered by the user stays `(agent proposal, date, unconfirmed)`. If the user has left partway through, record the proposals as unconfirmed rather than waiting.
+Answers become user tags. Refusals become edits to your log entry and the arc files. Anything left unanswered by the user stays `(agent proposal, date, unconfirmed)`. If the user has left partway through, record the proposals as unconfirmed rather than waiting.
 
 ## Step 8: Commit
 

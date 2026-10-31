@@ -73,7 +73,7 @@ The `arc.md` file describes the goal of the arc. It says why the work exists and
 
 ### `tasks.md`
 
-The `tasks.md` file contains a list of tasks for the arc, each with a checkbox. Task entries should describe a piece of work concretely enough to begin. Extra detail beyond a few lines of description should go in a task document, and a `read-first` in `start.toml` should be added to reference it when that task is next. Task entries can declare task-local overrides of the workflow by referencing the workflow in their description, e.g. `handoff:workflow-design-first-tdd.md`. When you finish a task, keep the entry in the task list (do not delete it), check its box, and write the date and, if there is one, the subject of the relevant commit. When a task is abandoned, delete its entry. Abandoning a task tagged `user` is itself a decision, so it needs the user's agreement. If a future agent might propose the task again, record why it was dropped in `do-not-reopen.md`. If you discover facts that would be relevant to future sessions while executing a task, add that information to a topic document (see *Storing findings*), not to the task's entry.
+The `tasks.md` file contains a list of tasks for the arc, each with a checkbox. Task entries should describe a piece of work concretely enough to begin. Extra detail beyond a few lines of description should go in a task document, and a `read-first` in `start.toml` should be added to reference it when that task is next. Task entries can declare task-local overrides of the workflow by referencing the workflow in their description, e.g. `handoff:workflow-design-first-tdd.md`. When you finish a task, keep the entry in the task list (do not delete it), check its box, and write the date and, if there is one, the subject of the relevant commit. When a task is abandoned, delete its entry. Abandoning a task with a user tag is itself a decision, so it needs the user's agreement. If a future agent might propose the task again, record why it was dropped in `do-not-reopen.md`. If you discover facts that would be relevant to future sessions while executing a task, add that information to a topic document (see *Storing findings*), not to the task's entry.
 
 Example:
 
@@ -97,7 +97,7 @@ Example:
 
 ### `open-questions.md`
 
-The `open-questions.md` file lists decisions reserved for the user. You may gather evidence and lay out the options for a given question, but you may not settle these on your own. Each entry contains the question, things which depend on answering it, and a provenance tag (see *Decisions and provenance*). Tag `user` when the user raised or deferred the question, and `agent proposal` when you raised it and the user has not yet decided one way or the other. When the user answers, delete the entry for the question and move the answer to an appropriate location, usually `do-not-reopen.md`, `tasks.md`, or `arc.md`.
+The `open-questions.md` file lists decisions reserved for the user. You may gather evidence and lay out the options for a given question, but you may not settle these on your own. Each entry contains the question, things which depend on answering it, and a provenance tag (see *Decisions and provenance*). Give it a user tag when the user raised or deferred the question, and `agent proposal` when you raised it and the user has not yet decided one way or the other. When the user answers, delete the entry for the question and move the answer to an appropriate location, usually `do-not-reopen.md`, `tasks.md`, or `arc.md`.
 
 Example:
 
@@ -164,18 +164,20 @@ The content of `entry.md` is then read by the agent in the next session as a des
 
 It is critical that you make a sharp distinction between your own proposals and the user's decisions. When you write down a decision by itself, nothing in the text says whether the user made it or you proposed it. The next agent, who only reads the files, cannot tell them apart and will treat both with the same weight, causing your proposals to solidify into instructions the user never agreed to. So every decision you write down needs to carry a **provenance tag** indicating who made it:
 
-- `(user, YYYY-MM-DD)`: the user stated or agreed to it, on that date.
+- `(<name>, YYYY-MM-DD)`: the user stated or agreed to it, on that date.
 - `(agent proposal, YYYY-MM-DD, unconfirmed)`: an agent proposed it, but the user has not yet agreed or disagreed.
+
+Fill `<name>` with the user's name (e.g. Alice, Bob) if you know it from context, or just `user` otherwise. Such an entry is called a **user tag**.
 
 Tag the route and done-when condition in `arc.md`, task entries in `tasks.md`, entries in `do-not-reopen.md`, open questions in `open-questions.md`, and the `next` field in `start.toml` when it follows from a decision. Do not tag facts in topic documents, prose in log entries, or claims in `checks.toml` files. These each contain observations, not decisions.
 
 Changing how you and the user work together through workflows is a decision too, although workflow files do not contain provenance tags (see *Workflows*). Only adopt, create, or switch workflows when the user agrees. Record the change, its reasoning, and the user's agreement in the update's log entry.
 
-When reading an arc, treat `user` entries as settled and `agent proposal` entries as open. You may question previous agent proposals.
+When reading an arc, treat entries with user tags as settled and `agent proposal` entries as open. You may question previous agent proposals.
 
-Important: Only tag `user` when the user stated the decision or unambiguously agreed to it. For example, "yes, let's do it that way" or "we should do option A". Assent only covers what was in front of the user. For example, if they respond "sounds good" to a summary, this does not confirm details you add later, and "go ahead" to starting work does not endorse every choice you make while doing it. When in doubt, keep the `agent proposal` tag and ask the user. You may propose anything you like, just make sure to tag it as `agent proposal`. You may not close an open question, add a settled entry to `do-not-reopen.md`, or confirm a proposal unless you can point to something the user said confirming it. To confirm a proposal, change the tag to `user` with the date they said it. When the user rejects a proposal, delete it, or record it in `do-not-reopen.md` if a future agent might propose it again.
+Important: Only add a user tag when the user stated the decision or unambiguously agreed to it. For example, "yes, let's do it that way" or "we should do option A". Assent only covers what was in front of the user. For example, if they respond "sounds good" to a summary, this does not confirm details you add later, and "go ahead" to starting work does not endorse every choice you make while doing it. When in doubt, keep the `agent proposal` tag and ask the user. You may propose anything you like, just make sure to tag it as `agent proposal`. You may not close an open question, add a settled entry to `do-not-reopen.md`, or confirm a proposal unless you can point to something the user said confirming it. To confirm a proposal, change the tag to a user tag dated when they said it. When the user rejects a proposal, delete it, or record it in `do-not-reopen.md` if a future agent might propose it again.
 
-Proposals get confirmed in two places. During each update, the agent interviews the user about every new `user` line and every proposal `next` depends on (handoff-update), and on each start, the agent's brief to the user includes unconfirmed proposals that the `next` task depends on.
+Proposals get confirmed in two places. During each update, the agent interviews the user about every new user tag and every proposal `next` depends on (handoff-update), and on each start, the agent's brief to the user includes unconfirmed proposals that the `next` task depends on.
 
 A session that begins with `handoff-start go` is **unattended**. Its update skips the confirmation interview and records every new decision as unconfirmed.
 

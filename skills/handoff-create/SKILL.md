@@ -71,7 +71,7 @@ Then fill in every file:
 - Topic documents: facts you learned in step 3 that a later session would otherwise have to rediscover, recorded as *Storing findings* in HANDOFF.md describes.
 - `start.toml` last, once everything else is settled, replacing the placeholder `next` and the placeholder `workflow` if `handoff new` was not passed one.
 
-Decisions from the interview are `(user, date)`. Anything you inferred and the user did not confirm is still an agent proposal.
+Decisions from the interview get user tags. Anything you inferred and the user did not confirm is still an agent proposal.
 
 Run `handoff lint` until it is clean.
 
