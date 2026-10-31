@@ -11,6 +11,7 @@
          racket/port
          racket/string
          racket/system
+         typed/file/sha1
          "cli.rkt"
          "error.rkt"
          "toml.rkt")
@@ -25,6 +26,10 @@
 
 (require/typed racket/os
   [gethostname (-> String)])
+
+(require/typed gregor
+  [adjust-timezone (-> Moment Integer Moment)]
+  [~t (-> Moment String String)])
 
 (module signal racket/base
   (require ffi/unsafe)
@@ -81,7 +86,12 @@
          print-start
          commit-subject-or-refuse
          data-directories
-         workflow-name?)
+         workflow-name?
+         workflow-copy-name
+         (struct-out provenance)
+         provenance-line
+         split-provenance
+         install-status)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -302,7 +312,9 @@
 
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install handoff-repository name)
-  (error 'handle-workflow-install "unimplemented"))
+  (define workflow (find-reusable-workflow name))
+  (print-install workflow (install-workflow handoff-repository workflow))
+  'success)
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
 (define (handle-workflow-fork handoff-repository arc-name source name)
@@ -1654,6 +1666,101 @@
 (define (workflow-name? name)
   (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
 
+(: workflow-copy-name (-> String String))
+(define (workflow-copy-name name)
+  (string-append "workflow-" name ".md"))
+
+(define-type Install-Outcome (U 'installed 'unchanged 'changed 'not-verbatim))
+
+;; Copies the reusable workflow verbatim to the root of the handoff
+;; repository, unless a copy is already there.
+(: install-workflow (-> Path reusable-workflow Install-Outcome))
+(define (install-workflow handoff-repository workflow)
+  (define name (reusable-workflow-name workflow))
+  (define path (build-path handoff-repository (workflow-copy-name name)))
+  (define contents (file->bytes (reusable-workflow-path workflow)))
+  (cond
+    [(file-exists? path) (install-status (file->string path) contents)]
+    [(or (directory-exists? path) (link-exists? path))
+     (raise-handoff-error "handoff:~a exists and is not a regular file"
+                          (workflow-copy-name name))]
+    [else
+     (call-with-output-file path
+       (λ ([out : Output-Port])
+         (write-string (provenance-line 'copied
+                                        (format "workflow ~a" name)
+                                        contents
+                                        (posix->moment (current-seconds) 0))
+                       out)
+         (write-bytes contents out)
+         (void))
+       #:exists 'error)
+     'installed]))
+
+;; Whether `copy` is a verbatim copy of a reusable workflow whose bytes are
+;; now `contents`.
+(: install-status (-> String Bytes (U 'unchanged 'changed 'not-verbatim)))
+(define (install-status copy contents)
+  (define-values (provenance _text) (split-provenance copy))
+  (cond
+    [(not (and provenance (eq? (provenance-how provenance) 'copied)))
+     'not-verbatim]
+    [(equal? (provenance-hash provenance) (sha256 contents)) 'unchanged]
+    [else 'changed]))
+
+(: print-install (-> reusable-workflow Install-Outcome Void))
+(define (print-install workflow outcome)
+  (define reference
+    (string-append "handoff:" (workflow-copy-name (reusable-workflow-name workflow))))
+  (case outcome
+    [(installed)
+     (printf "installed: ~a\n" reference)
+     (printf "from: ~a\n" (reusable-workflow-path workflow))]
+    [else
+     (printf "exists: ~a, left unchanged\n" reference)
+     (displayln
+      (case outcome
+        [(unchanged) "the reusable workflow is unchanged since it was copied"]
+        [(changed) "the reusable workflow has changed since it was copied"]
+        [else "it is not a verbatim copy"]))]))
+
+;;; Provenance lines
+
+(struct provenance ([how : (U 'copied 'forked 'created)]
+                    [hash : (U String #f)]) ; #f for created
+  #:transparent)
+
+;; The line opening a copy of `contents`, the bytes of the file `source`
+;; describes ("workflow spike" or a reference), made at `now`. The date is
+;; UTC.
+(: provenance-line (-> (U 'copied 'forked) String Bytes Moment String))
+(define (provenance-line how source contents now)
+  (format "<!-- ~a from ~a (sha256:~a) on ~a~a -->\n"
+          how
+          source
+          (sha256 contents)
+          (~t (adjust-timezone now 0) "yyyy-MM-dd")
+          (if (eq? how 'copied) "; verbatim" "")))
+
+;; The provenance on the first line of `text`, if it has one, and the text
+;; after that line.
+(: split-provenance (-> String (Values (U provenance #f) String)))
+(define (split-provenance text)
+  (match (regexp-match #px"^<!-- (copied|forked|created) ([^\n]*)-->(?:\n|$)" text)
+    [(list line (? string? how) (? string? details))
+     (define hash (regexp-match #px"\\(sha256:([0-9a-f]{64})\\)" details))
+     (values (provenance (case how
+                           [("copied") 'copied]
+                           [("forked") 'forked]
+                           [else 'created])
+                         (and hash (second hash)))
+             (substring text (string-length line)))]
+    [_ (values #f text)]))
+
+(: sha256 (-> Bytes String))
+(define (sha256 contents)
+  (bytes->hex-string (sha256-bytes contents)))
+
 ;;; Markdown
 
 ;; The lines of the first paragraph after a document's provenance line and
@@ -1691,11 +1798,13 @@
 
 (: verbatim-copy? (-> String Boolean))
 (define (verbatim-copy? text)
-  (regexp-match? #px"^<!-- copied [^\n]*; verbatim -->\n" text))
+  (define-values (provenance _text) (split-provenance text))
+  (and provenance (eq? (provenance-how provenance) 'copied)))
 
 (: strip-provenance (-> String String))
 (define (strip-provenance text)
-  (regexp-replace #px"^<!-- (copied|forked|created) [^\n]*-->\n" text ""))
+  (define-values (_provenance rest) (split-provenance text))
+  rest)
 
 ;; The text of the heading on an entry's first nonblank line.
 (: entry-headline (-> String (U String #f)))

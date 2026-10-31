@@ -1,10 +1,24 @@
 #lang typed/racket/base
 ;; Reusable workflows.
 
-(require (except-in typed/rackunit check)
+(require racket/function
+         (except-in typed/rackunit check)
          "../main.rkt")
 
+(require/typed gregor
+  [iso8601->moment (-> String Moment)])
+
 (define home (string->path "/home/u"))
+
+;; The SHA-256 of #"x", as sha256sum prints it.
+(define x-hash "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881")
+
+(define now (iso8601->moment "2026-10-31T12:00:00Z"))
+
+(: split (-> String (Pairof (U provenance #f) String)))
+(define (split text)
+  (call-with-values (thunk (split-provenance text))
+                    (inst cons (U provenance #f) String)))
 
 (: paths (-> (Listof String) (Listof Path)))
 (define (paths strings)
@@ -43,3 +57,63 @@
 (test-case "a workflow name has no capitals or underscores"
   (check-equal? (map workflow-name? (list "README" "x_y" ""))
                 (list #f #f #f)))
+
+(test-case "a workflow's copy is named workflow-<name>.md"
+  (check-equal? (workflow-copy-name "spike") "workflow-spike.md"))
+
+(test-case "a verbatim copy's provenance line names the workflow, its hash and the date"
+  (check-equal? (provenance-line 'copied "workflow spike" #"x" now)
+                (format "<!-- copied from workflow spike (sha256:~a) on 2026-10-31; verbatim -->\n"
+                        x-hash)))
+
+(test-case "a fork's provenance line names its source and is not verbatim"
+  (check-equal? (provenance-line 'forked "handoff:workflow-spike.md" #"x" now)
+                (format "<!-- forked from handoff:workflow-spike.md (sha256:~a) on 2026-10-31 -->\n"
+                        x-hash)))
+
+(test-case "a provenance line's date is the UTC date"
+  (check-regexp-match #rx" on 2026-11-01; verbatim -->\n$"
+                      (provenance-line 'copied
+                                       "workflow spike"
+                                       #"x"
+                                       (iso8601->moment "2026-10-31T22:00:00-05:00"))))
+
+(test-case "a verbatim copy's provenance is split from its text, with the hash"
+  (check-equal? (split (string-append (provenance-line 'copied "workflow spike" #"x" now)
+                                      "# Spike\n"))
+                (cons (provenance 'copied x-hash) "# Spike\n")))
+
+(test-case "a fork's provenance is split from its text, with the hash"
+  (check-equal? (split (string-append (provenance-line 'forked "workflow spike" #"x" now)
+                                      "# Spike\n"))
+                (cons (provenance 'forked x-hash) "# Spike\n")))
+
+(test-case "a created workflow's provenance has no hash"
+  (check-equal? (split "<!-- created for this arc on 2026-10-31 -->\n# W\n")
+                (cons (provenance 'created #f) "# W\n")))
+
+(test-case "a text without a provenance line is left whole"
+  (check-equal? (split "# W\n") (cons #f "# W\n")))
+
+(test-case "a provenance line that is not the first line is not provenance"
+  (check-equal? (split "# W\n<!-- created for this arc on 2026-10-31 -->\n")
+                (cons #f "# W\n<!-- created for this arc on 2026-10-31 -->\n")))
+
+(test-case "a copy is unchanged when its hash is the reusable workflow's"
+  (check-equal? (install-status (provenance-line 'copied "workflow spike" #"x" now) #"x")
+                'unchanged))
+
+(test-case "a copy is changed when its hash is not the reusable workflow's"
+  (check-equal? (install-status (provenance-line 'copied "workflow spike" #"x" now) #"y")
+                'changed))
+
+(test-case "a fork is not a verbatim copy"
+  (check-equal? (install-status (provenance-line 'forked "workflow spike" #"x" now) #"x")
+                'not-verbatim))
+
+(test-case "a created workflow is not a verbatim copy"
+  (check-equal? (install-status "<!-- created for this arc on 2026-10-31 -->\n" #"x")
+                'not-verbatim))
+
+(test-case "a file without a provenance line is not a verbatim copy"
+  (check-equal? (install-status "x" #"x") 'not-verbatim))
