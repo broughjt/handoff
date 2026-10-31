@@ -79,7 +79,9 @@
          (struct-out checks-uncompared)
          build-start-report
          print-start
-         commit-subject-or-refuse)
+         commit-subject-or-refuse
+         data-directories
+         workflow-name?)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -282,7 +284,21 @@
 
 (: handle-workflow-list (-> Status))
 (define (handle-workflow-list)
-  (error 'handle-workflow-list "unimplemented"))
+  (define directories (workflow-directories))
+  (define workflows (read-reusable-workflows directories))
+  (cond
+    [(empty? workflows)
+     (printf "no reusable workflows in ~a\n"
+             (string-join (map path->string directories) ", "))]
+    [else
+     (displayln "search order; install, fork and new take the first workflow with a name")
+     (for ([workflow (in-list workflows)])
+       (define path (reusable-workflow-path workflow))
+       (newline)
+       (printf "name: ~a\n" (reusable-workflow-name workflow))
+       (printf "path: ~a\n" path)
+       (printf "summary: ~a\n" (summary (file->string path))))])
+  'success)
 
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install handoff-repository name)
@@ -294,7 +310,16 @@
 
 (: handle-guide (-> Status))
 (define (handle-guide)
-  (error 'handle-guide "unimplemented"))
+  (define directories (read-data-directories))
+  (define path
+    (or (findf file-exists?
+               (for/list : (Listof Path) ([directory (in-list directories)])
+                 (build-path directory "handoff" guide-file)))
+        (raise-handoff-error "no handoff/~a in ~a"
+                             guide-file
+                             (string-join (map path->string directories) ", "))))
+  (displayln path)
+  'success)
 
 ;;; Repositories
 
@@ -1387,10 +1412,7 @@
              #:unless (let ([text (cdr document)])
                         (and text (verbatim-copy? text))))
     (define text (cdr document))
-    (cons (car document)
-          (if text
-              (string-join (map string-trim (first-paragraph text)))
-              ""))))
+    (cons (car document) (if text (summary text) ""))))
 
 (: print-start (-> start-report Void))
 (define (print-start report)
@@ -1561,6 +1583,77 @@
                           (build-path path results-file))]
     [else (format "~a: ~a" (arc-name arc) headline)]))
 
+;;; Reusable workflows
+
+(define guide-file "HANDOFF.md")
+
+(struct reusable-workflow ([name : String] [path : Path]) #:transparent)
+
+;; $XDG_DATA_HOME (default ~/.local/share), then $XDG_DATA_DIRS (default
+;; /usr/local/share:/usr/share). Empty and relative entries are ignored, as
+;; the XDG spec says.
+(: data-directories (-> (U String #f) (U String #f) Path (Listof Path)))
+(define (data-directories data-home data-dirs home)
+  (: absolute (-> String (U Path #f)))
+  (define (absolute entry)
+    (and (non-empty-string? entry)
+         (absolute-path? entry)
+         (string->path entry)))
+  (cons (or (and data-home (absolute data-home))
+            (build-path home ".local" "share"))
+        (filter-map absolute
+                    (string-split (if (and data-dirs (non-empty-string? data-dirs))
+                                      data-dirs
+                                      "/usr/local/share:/usr/share")
+                                  ":"))))
+
+(: read-data-directories (-> (Listof Path)))
+(define (read-data-directories)
+  (data-directories (getenv "XDG_DATA_HOME")
+                    (getenv "XDG_DATA_DIRS")
+                    (find-system-path 'home-dir)))
+
+(: workflow-directories (-> (Listof Path)))
+(define (workflow-directories)
+  (for/list ([directory (in-list (read-data-directories))])
+    (build-path directory "handoff" "workflows")))
+
+;; Every reusable workflow in `directories`, in search order. A file reached
+;; twice, as when one data directory is a profile linking to the package that
+;; another names directly, is listed once.
+(: read-reusable-workflows (-> (Listof Path) (Listof reusable-workflow)))
+(define (read-reusable-workflows directories)
+  (define-values (workflows _seen)
+    (for*/fold ([workflows : (Listof reusable-workflow) null]
+                [seen : (Listof Path) null])
+               ([directory (in-list directories)]
+                #:when (directory-exists? directory)
+                [file (in-list (directory-list directory))])
+      (define path (build-path directory file))
+      (define name (path->string (path-replace-extension file #"")))
+      (cond
+        [(and (path-has-extension? file #".md")
+              (workflow-name? name)
+              (file-exists? path)
+              (not (member (normalize-path path) seen)))
+         (values (cons (reusable-workflow name path) workflows)
+                 (cons (normalize-path path) seen))]
+        [else (values workflows seen)])))
+  (reverse workflows))
+
+(: find-reusable-workflow (-> String reusable-workflow))
+(define (find-reusable-workflow name)
+  (or (findf (λ ([workflow : reusable-workflow])
+               (equal? (reusable-workflow-name workflow) name))
+             (read-reusable-workflows (workflow-directories)))
+      (raise-handoff-error "no reusable workflow named ~a; see handoff workflow list"
+                           name)))
+
+;; Lowercase only, so that a README.md beside the workflows is not one.
+(: workflow-name? (-> String Boolean))
+(define (workflow-name? name)
+  (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
+
 ;;; Markdown
 
 ;; The lines of the first paragraph after a document's provenance line and
@@ -1571,6 +1664,11 @@
     (or (string=? (string-trim line) "") (regexp-match? #px"^ {0,3}#" line)))
   (define lines (string-split (strip-provenance text) "\n" #:trim? #f))
   (takef (dropf lines skip?) (negate skip?)))
+
+;; The first paragraph on one line.
+(: summary (-> String String))
+(define (summary text)
+  (string-join (map string-trim (first-paragraph text))))
 
 (define non-prose-openings
   (list #px"^[-*+]\\s"
