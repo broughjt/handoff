@@ -55,7 +55,7 @@ The workflow only needs to fit the arc's first phase. When it fits only that pha
 
 ## Step 5: Write
 
-If `.scratch/handoff/` does not exist, ask the user to create it. Do not run `git init` yourself unless the user gives you explicit permission.
+If `.scratch/handoff/` does not exist, offer to create it, and to add `.scratch/` to the project's `.gitignore` if it is not ignored already. Do neither without the user's explicit permission.
 
 Run `handoff new <arc> [<workflow>]`, passing the workflow chosen in the interview:
 

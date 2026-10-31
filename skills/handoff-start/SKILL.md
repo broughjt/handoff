@@ -22,7 +22,7 @@ Run `handoff start [arc]` synchronously. It runs the checks, so give it the time
 
 - Several arcs: if there are several arcs and you were not given one, `handoff start` refuses and lists them. Ask the user which one they want. Do not guess from recency, since the user may be switching arcs deliberately.
 - No arcs: say so, offer to run the handoff-create skill, and stop.
-- No handoff repository: say so and stop. The user creates it.
+- No handoff repository: say so, offer to run the handoff-create skill, and stop.
 
 ## Step 3: Read the report and the files it points to
 

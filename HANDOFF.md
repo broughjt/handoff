@@ -10,7 +10,7 @@ This document is addressed to you, the coding agent reading it. The user is the 
 
 Arcs are kept in the **handoff repository**, `.scratch/handoff/`, which is a Git repository of its own inside the project. The project gitignores `.scratch/`, so `rg`, `fd`, and the project's Git will skip it. Reach it by path directly, and do not take an empty search result as evidence that it or a file it contains is missing. The script locates it by walking up from the current working directory, so it works from anywhere in the project or the handoff repository itself.
 
-The user creates the handoff repository. If it is missing, say so and stop. Create it only if the user gives you explicit permission. Arc files and topic documents are committed in the handoff repository, never in the project itself. Use `git -C .scratch/handoff` for anything the script does not do for you.
+If the handoff repository is missing, offer to create it, but do not create it without the user's explicit permission. Arc files and topic documents are committed in the handoff repository, never in the project itself. Use `git -C .scratch/handoff` for anything the script does not do for you.
 
 ## Arcs
 
