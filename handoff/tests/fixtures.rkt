@@ -12,18 +12,25 @@
   [iso8601->moment (-> String Moment)])
 
 (define run
-  (check-run "murph" (iso8601->moment "2026-10-29T18:00:00Z") 1 "main" "abc123" null))
+  (check-run "murph"
+             (iso8601->moment "2026-10-29T18:00:00Z")
+             1
+             "main"
+             "abc123"
+             null))
 
 (define summarized "# Title\n\nWhat this covers.\n")
 
-(define workflow "<!-- created for this arc on 2026-10-29 -->\n# Workflow\n\nHow we work.\n")
+(define workflow
+  "<!-- created for this arc on 2026-10-29 -->\n# Workflow\n\nHow we work.\n")
 
 (define clean
   (arc "a"
        (start "n"
               (scope-path 'arc (string->path "workflow.md"))
-              (list (read-first (scope-path 'project (string->path "src/main.rkt"))
-                                "the code")))
+              (list (read-first
+                     (scope-path 'project (string->path "src/main.rkt"))
+                     "the code")))
        (list (check "tests" "The tests pass" "true" 60))
        (for/fold ([texts : (Immutable-HashTable String String)
                          (hash "start.toml" "next = 'n'\n")])
@@ -41,4 +48,6 @@
 
 (: with-text (-> arc String String arc))
 (define (with-text arc* file text)
-  (struct-copy arc arc* [state-texts (hash-set (arc-state-texts arc*) file text)]))
+  (struct-copy arc
+               arc*
+               [state-texts (hash-set (arc-state-texts arc*) file text)]))

@@ -74,10 +74,10 @@
    "  workflow  list, install, or fork reusable workflows"
    "  guide     print the path of the handoff guide"
    #:once-each
-   [("--repository") path
-                     "Handoff repository to use instead of the nearest .scratch/handoff/"
-                     (set! handoff-repository
-                           (string->path (assert path string?)))]
+   [("--repository")
+    path
+    "Handoff repository to use instead of the nearest .scratch/handoff/"
+    (set! handoff-repository (string->path (assert path string?)))]
    #:args (subcommand . arguments)
    ;; Typed Racket types the formal arguments of `#:args` as `Any`, so we do a
    ;; runtime check explicitly (that we expect will never fail).
@@ -98,8 +98,10 @@
     [("new") (parse-new-subcommand program arguments)]
     [("workflow") (parse-workflow-subcommand program arguments)]
     [("guide") (parse-guide-subcommand program arguments)]
-    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, close, new, workflow, or guide"
-                               subcommand)]))
+    [else
+     (raise-handoff-error
+      "unknown command ~a; expected list, start, check, lint, update, close, new, workflow, or guide"
+      subcommand)]))
 
 (: parse-arc-argument (-> String (Listof String) (U String #f)))
 (define (parse-arc-argument program arguments)
@@ -192,20 +194,25 @@
        [("list") (parse-workflow-list-subcommand program arguments)]
        [("install") (parse-workflow-install-subcommand program arguments)]
        [("fork") (parse-workflow-fork-subcommand program arguments)]
-       [else (raise-handoff-error "unknown command workflow ~a; expected list, install, or fork"
-                                  verb)]))))
+       [else
+        (raise-handoff-error
+         "unknown command workflow ~a; expected list, install, or fork"
+         verb)]))))
 
-(: parse-workflow-list-subcommand (-> String (Listof String) workflow-list-subcommand))
+(: parse-workflow-list-subcommand
+   (-> String (Listof String) workflow-list-subcommand))
 (define (parse-workflow-list-subcommand program arguments)
   (command-line #:program program #:argv arguments #:args ()
                 (workflow-list-subcommand)))
 
-(: parse-workflow-install-subcommand (-> String (Listof String) workflow-install-subcommand))
+(: parse-workflow-install-subcommand
+   (-> String (Listof String) workflow-install-subcommand))
 (define (parse-workflow-install-subcommand program arguments)
   (command-line #:program program #:argv arguments #:args (name)
                 (workflow-install-subcommand (assert name string?))))
 
-(: parse-workflow-fork-subcommand (-> String (Listof String) workflow-fork-subcommand))
+(: parse-workflow-fork-subcommand
+   (-> String (Listof String) workflow-fork-subcommand))
 (define (parse-workflow-fork-subcommand program arguments)
   (command-line #:program program #:argv arguments
                 #:help-labels

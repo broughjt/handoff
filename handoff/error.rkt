@@ -9,4 +9,5 @@
 
 (: raise-handoff-error (-> String Any * Nothing))
 (define (raise-handoff-error template . arguments)
-  (raise (exn:fail:handoff (apply format template arguments) (current-continuation-marks))))
+  (raise (exn:fail:handoff (apply format template arguments)
+                           (current-continuation-marks))))

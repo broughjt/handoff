@@ -21,7 +21,8 @@
                 (list echo)))
 
 (test-case "checks keep their file order and their timeouts"
-  (check-equal? (map (λ ([check : check]) (cons (check-id check) (check-timeout check)))
+  (check-equal? (map (λ ([check : check])
+                       (cons (check-id check) (check-timeout check)))
                      (parse-checks "[[check]]
                                     id = 'b'
                                     claim = 'c'
@@ -104,8 +105,9 @@
                                   source))))
 
 (test-case "invalid TOML is reported against its source"
-  (check-exn (λ (error) (and (exn:fail:handoff? error)
-                             (string-prefix? (exn-message error) "checks.toml: ")))
+  (check-exn (λ (error)
+               (and (exn:fail:handoff? error)
+                    (string-prefix? (exn-message error) "checks.toml: ")))
              (thunk (parse-checks "[[check]" source))))
 
 (test-case "outcomes follow the exit code"
@@ -117,7 +119,9 @@
 (test-case "a true result is printed without its output"
   (check-equal? (with-output-to-string
                   (thunk (print-results
-                          (list (check-result echo (check-observation 0 31/25 "hi\n" 0))))))
+                          (list (check-result
+                                 echo
+                                 (check-observation 0 31/25 "hi\n" 0))))))
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: true\n"
@@ -126,10 +130,15 @@
                                "summary: 1 true\n")))
 
 (test-case "a failing result is printed with its exit code and the last 20 lines of output"
-  (define output (string-join (for/list : (Listof String) ([n (in-range 1 23)]) (number->string n)) "\n"))
+  (define output
+    (string-join (for/list : (Listof String) ([n (in-range 1 23)])
+                   (number->string n))
+                 "\n"))
   (check-equal? (with-output-to-string
                   (thunk (print-results
-                          (list (check-result echo (check-observation 1 0 output 0))))))
+                          (list (check-result
+                                 echo
+                                 (check-observation 1 0 output 0))))))
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: false\n"
@@ -137,7 +146,8 @@
                                "duration: 0.0s\n"
                                "output (last 20 of 22 lines):\n"
                                (apply string-append
-                                      (for/list : (Listof String) ([n (in-range 3 23)])
+                                      (for/list : (Listof String)
+                                                ([n (in-range 3 23)])
                                         (format "  ~a\n" n)))
                                "\n"
                                "summary: 1 false\n")))
@@ -146,22 +156,26 @@
   (check-regexp-match #rx"outcome: timeout\ntimeout: 60.0s\n"
                       (with-output-to-string
                         (thunk (print-results
-                                (list (check-result echo (check-observation #f 60 "" 0))))))))
+                                (list (check-result
+                                       echo
+                                       (check-observation #f 60 "" 0))))))))
 
 (test-case "truncated output says how much was dropped"
-  (check-regexp-match #rx"truncated: 7 bytes before the output were not kept\noutput:\n  tail\n"
-                      (with-output-to-string
-                        (thunk (print-results
-                                (list (check-result echo (check-observation 1 0 "tail\n" 7))))))))
+  (check-regexp-match
+   #rx"truncated: 7 bytes before the output were not kept\noutput:\n  tail\n"
+   (with-output-to-string
+     (thunk (print-results
+             (list (check-result echo (check-observation 1 0 "tail\n" 7))))))))
 
 (test-case "the summary counts outcomes in a fixed order"
-  (check-regexp-match #rx"summary: 1 true, 2 false, 1 timeout\n$"
-                      (with-output-to-string
-                        (thunk (print-results
-                                (list (check-result echo (check-observation #f 0 "" 0))
-                                      (check-result echo (check-observation 1 0 "" 0))
-                                      (check-result echo (check-observation 0 0 "" 0))
-                                      (check-result echo (check-observation 1 0 "" 0))))))))
+  (check-regexp-match
+   #rx"summary: 1 true, 2 false, 1 timeout\n$"
+   (with-output-to-string
+     (thunk (print-results
+             (list (check-result echo (check-observation #f 0 "" 0))
+                   (check-result echo (check-observation 1 0 "" 0))
+                   (check-result echo (check-observation 0 0 "" 0))
+                   (check-result echo (check-observation 1 0 "" 0))))))))
 
 (test-case "a run without checks says \"no checks\" in the summary"
   (check-equal? (with-output-to-string (thunk (print-results null)))

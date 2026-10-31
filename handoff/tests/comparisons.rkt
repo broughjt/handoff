@@ -23,9 +23,11 @@
                                  (result "new" "true" 0)
                                  (result "redefined" "new" 0))))
   (check-equal? comparisons
-                (list (check-matched (result "unchanged" "true" 0) (result "unchanged" "true" 0))
+                (list (check-matched (result "unchanged" "true" 0)
+                                     (result "unchanged" "true" 0))
                       (check-added (result "new" "true" 0))
-                      (check-matched (result "redefined" "old" 0) (result "redefined" "new" 0))
+                      (check-matched (result "redefined" "old" 0)
+                                     (result "redefined" "new" 0))
                       (check-removed (result "removed" "true" 0)))))
 
 (test-case "rewording a claim does not redefine a check, but changing its timeout does"
@@ -44,7 +46,8 @@
                   (check-matched-change
                    (check-matched (result "a" "true" before)
                                   (result "a" "true" after))))
-                ;; before: true, false, unknown, timeout; after in the same order
+                ;; before: true, false, unknown, timeout; after in the same
+                ;; order
                 (list 'unchanged 'contradicted 'unverified 'unverified
                       'contradicted 'unchanged 'unverified 'unverified
                       'verified 'verified 'unchanged 'still-unverified
@@ -67,7 +70,8 @@
                           7
                           "murph"
                           (iso8601->moment "2026-10-28T23:55:41Z"))))
-                (string-append "compared against log/7, recorded on murph at 2026-10-28T23:55:41Z\n"
+                (string-append "compared against log/7, recorded on murph at "
+                               "2026-10-28T23:55:41Z\n"
                                "\n"
                                "id: flips\n"
                                "claim: it holds\n"

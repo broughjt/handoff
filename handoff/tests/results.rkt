@@ -60,16 +60,19 @@
                    "ends with a quote\""))
   (define run
     (check-run "murph" started 5/2 "main" "abc123"
-               (list (check-result (check "c" "claim \"quoted\"" "printf '\\a'" 1/1000)
-                                   (check-observation 3 7/1000 output 1024)))))
-  (check-true (equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
-                                       source)
+               (list (check-result
+                      (check "c" "claim \"quoted\"" "printf '\\a'" 1/1000)
+                      (check-observation 3 7/1000 output 1024)))))
+  (check-true (equal? (parse-check-run
+                       (with-output-to-string (thunk (write-check-run run)))
+                       source)
                       run)))
 
 (test-case "a run on a detached head without commits reads back as written"
   (define run (check-run "murph" started 0 #f #f null))
-  (check-true (equal? (parse-check-run (with-output-to-string (thunk (write-check-run run)))
-                                       source)
+  (check-true (equal? (parse-check-run
+                       (with-output-to-string (thunk (write-check-run run)))
+                       source)
                       run)))
 
 (test-case "a check's outcome is not a field of results.toml"

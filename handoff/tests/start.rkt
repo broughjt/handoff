@@ -13,18 +13,23 @@
 
 (define recorded (struct-copy check-run run [head head]))
 
-(define here (project-status (string->path "/p") "main" head (history null null)))
+(define here
+  (project-status (string->path "/p") "main" head (history null null)))
 
-(: project-output (-> project-status (U (Pairof Positive-Integer check-run) #f) String))
+(: project-output
+   (-> project-status (U (Pairof Positive-Integer check-run) #f) String))
 (define (project-output project-status baseline)
   (with-output-to-string
     (thunk (print-project-repository project-status baseline))))
 
 (: with-history (-> (Listof String) (Listof String) project-status))
 (define (with-history only-recorded only-current)
-  (struct-copy project-status here [history (history only-recorded only-current)]))
+  (struct-copy project-status
+               here
+               [history (history only-recorded only-current)]))
 
-(: repository-output (-> (Listof String) (U log-entry #f) (Listof String) String))
+(: repository-output
+   (-> (Listof String) (U log-entry #f) (Listof String) String))
 (define (repository-output diagnostics pending dirty)
   (with-output-to-string
     (thunk (print-handoff-repository diagnostics pending dirty))))
@@ -53,7 +58,8 @@
                                "no new commits\n")))
 
 (test-case "the project section lists commits since the baseline"
-  (check-equal? (project-output (with-history null (list "aaa One" "bbb Two")) (cons 1 recorded))
+  (check-equal? (project-output (with-history null (list "aaa One" "bbb Two"))
+                                (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "commits since log/1:\n"
@@ -61,7 +67,8 @@
                                "  bbb Two\n")))
 
 (test-case "the project section marks each side of a rewritten history"
-  (check-equal? (project-output (with-history (list "aaa Old") (list "bbb New")) (cons 1 recorded))
+  (check-equal? (project-output (with-history (list "aaa Old") (list "bbb New"))
+                                (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "history rewritten since log/1; < marks commits only in the recorded history, > only in the current one:\n"
@@ -69,13 +76,19 @@
                                "  > bbb New\n")))
 
 (test-case "the project section says when the recorded head does not resolve"
-  (check-equal? (project-output (struct-copy project-status here [history 'unresolvable]) (cons 1 recorded))
+  (check-equal? (project-output (struct-copy project-status
+                                             here
+                                             [history 'unresolvable])
+                                (cons 1 recorded))
                 (string-append "now: main at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "recorded head does not resolve here: its history was rewritten and pruned, or it was committed on another machine\n")))
 
 (test-case "the project section says when the branch differs from the baseline's"
-  (check-equal? (project-output (struct-copy project-status here [branch "topic"]) (cons 1 recorded))
+  (check-equal? (project-output (struct-copy project-status
+                                             here
+                                             [branch "topic"])
+                                (cons 1 recorded))
                 (string-append "now: topic at 0123456789ab\n"
                                "at log/1: main at 0123456789ab\n"
                                "the branch differs from log/1\n"
@@ -85,12 +98,21 @@
   (check-equal? (project-output here #f) "now: main at 0123456789ab\n"))
 
 (test-case "a detached project without commits"
-  (check-equal? (project-output (project-status (string->path "/p") #f #f (history null null)) #f)
+  (check-equal? (project-output (project-status (string->path "/p")
+                                                #f
+                                                #f
+                                                (history null null))
+                                #f)
                 "now: detached with no commits\n"))
 
 (test-case "the project section lists at most 20 commits"
-  (define lines (for/list : (Listof String) ([n (in-range 25)]) (format "c~a" n)))
-  (check-equal? (take-right (string-split (project-output (with-history null lines) (cons 1 recorded)) "\n") 2)
+  (define lines
+    (for/list : (Listof String) ([n (in-range 25)]) (format "c~a" n)))
+  (check-equal? (take-right
+                 (string-split (project-output (with-history null lines)
+                                               (cons 1 recorded))
+                               "\n")
+                 2)
                 (list "  c19" "  and 5 more")))
 
 (test-case "the handoff repository section of a clean repository"
@@ -117,14 +139,22 @@
 
 (test-case "the handoff repository section says when a pending entry's results do not parse"
   (check-regexp-match #rx"\n  results: does not parse; see lint\n"
-                      (repository-output null (log-entry 2 #f "# Second\n" "a/log/2/results.toml is missing project") null)))
+                      (repository-output
+                       null
+                       (log-entry 2
+                                  #f
+                                  "# Second\n"
+                                  "a/log/2/results.toml is missing project")
+                       null)))
 
 (test-case "the handoff repository section says when a pending entry has neither results nor entry.md"
   (check-regexp-match #rx"\n  results: none\n  entry.md: not written\n"
                       (repository-output null (log-entry 2 #f #f #f) null)))
 
 (test-case "the handoff repository section lists uncommitted changes"
-  (check-equal? (repository-output null #f (list " M a/tasks.md" "?? a/plan.md"))
+  (check-equal? (repository-output null
+                                   #f
+                                   (list " M a/tasks.md" "?? a/plan.md"))
                 (string-append "lint: no errors\n"
                                "pending log entry: none\n"
                                "uncommitted:\n"
@@ -132,8 +162,10 @@
                                "  ?? a/plan.md\n")))
 
 (test-case "other documents gives each document's summary, when it has one"
-  (check-equal? (other-documents-output (list (cons (scope-path 'arc (string->path "notes/")) "")
-                                              (cons (scope-path 'handoff (string->path "topic.md")) "What this covers.")))
+  (check-equal? (other-documents-output
+                 (list (cons (scope-path 'arc (string->path "notes/")) "")
+                       (cons (scope-path 'handoff (string->path "topic.md"))
+                             "What this covers.")))
                 (string-append "- arc:notes/\n"
                                "- handoff:topic.md: What this covers.\n")))
 
@@ -142,28 +174,47 @@
 
 (test-case "the report lists the documents with their summaries, leaving out the workflow and verbatim copies"
   (check-equal? (start-report-other-documents
-                 (report (struct-copy arc clean
-                                      [documents (append (arc-documents clean)
-                                                         (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
-                                                                     "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n\nSpike.\n")))])
+                 (report (struct-copy
+                          arc
+                          clean
+                          [documents
+                           (append (arc-documents clean)
+                                   (list (cons (scope-path
+                                                'handoff
+                                                (string->path
+                                                 "workflow-spike.md"))
+                                               (string-append
+                                                "<!-- copied from workflow spike "
+                                                "(sha256:00) on 2026-10-29; "
+                                                "verbatim -->\n"
+                                                "# Spike\n\nSpike.\n"))))])
                          #f))
                 (list (cons (scope-path 'arc (string->path "notes/")) "")
-                      (cons (scope-path 'handoff (string->path "topic.md")) "What this covers."))))
+                      (cons (scope-path 'handoff (string->path "topic.md"))
+                            "What this covers."))))
 
 (test-case "the report inlines the last committed log entry, not the pending one"
-  (check-equal? (car (last (start-report-sections (report (with-pending (log-entry 2 #f "# Second\n" run)) #f))))
+  (check-equal? (car (last (start-report-sections
+                            (report (with-pending
+                                     (log-entry 2 #f "# Second\n" run))
+                                    #f))))
                 "arc:log/1/entry.md"))
 
 (test-case "the report's pending entry is the uncommitted last entry"
   (define pending (log-entry 2 #f "# Second\n" run))
-  (check-equal? (start-report-pending (report (with-pending pending) #f)) pending))
+  (check-equal? (start-report-pending (report (with-pending pending) #f))
+                pending))
 
 (test-case "without a baseline the report's checks are not compared"
-  (check-equal? (start-report-checks (report clean #f)) (checks-uncompared null)))
+  (check-equal? (start-report-checks (report clean #f))
+                (checks-uncompared null)))
 
 (test-case "with a baseline the report's checks are compared against it"
   (check-true (equal? (start-report-checks (report clean (cons 2 recorded)))
-                      (checks-compared 2 "murph" (check-run-started recorded) null))))
+                      (checks-compared 2
+                                       "murph"
+                                       (check-run-started recorded)
+                                       null))))
 
 (test-case "the report gives the inlined files, then the other documents, the project, the handoff repository and the checks"
   (define output
