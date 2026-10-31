@@ -14,10 +14,11 @@
   (call-with-values (thunk (omit-finished-tasks text)) (inst cons String Natural)))
 
 (: sections (-> arc (U Positive-Integer #f) (Listof (Pairof String String))))
-(define (sections parsed number)
-  (inlined-sections parsed
-                    (findf (λ ([entry : log-entry]) (eqv? (log-entry-number entry) number))
-                           (arc-log parsed))))
+(define (sections arc log-entry-number*)
+  (inlined-sections arc
+                    (findf (λ ([entry : log-entry])
+                             (eqv? (log-entry-number entry) log-entry-number*))
+                           (arc-log arc))))
 
 ;; `clean` with tasks.md padded so that the report inlines `total` bytes.
 (: padded (-> Natural arc))
@@ -117,14 +118,14 @@
 
 (test-case "lint reports a document whose summary is a list"
   (check-equal? (lint (struct-copy arc clean
-                                   [other-documents (list (cons (scope-path 'arc (string->path "plan.md"))
-                                                          "# Plan\n\n- a list\n"))]))
+                                   [documents (list (cons (scope-path 'arc (string->path "plan.md"))
+                                                    "# Plan\n\n- a list\n"))]))
                 (list "a/plan.md: expected a paragraph of prose after the opening headings, not a list, code block, table, or HTML")))
 
 (test-case "lint does not require a summary of a verbatim workflow copy"
   (check-equal? (lint (struct-copy arc clean
-                                   [other-documents (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
-                                                          "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n"))]))
+                                   [documents (list (cons (scope-path 'handoff (string->path "workflow-spike.md"))
+                                                    "<!-- copied from workflow spike (sha256:00) on 2026-10-29; verbatim -->\n# Spike\n"))]))
                 null))
 
 (test-case "lint reports a name in the log that is not an entry number"

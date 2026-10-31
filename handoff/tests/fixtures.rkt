@@ -40,5 +40,5 @@
        null))
 
 (: with-text (-> arc String String arc))
-(define (with-text parsed file text)
-  (struct-copy arc parsed [state-texts (hash-set (arc-state-texts parsed) file text)]))
+(define (with-text arc* file text)
+  (struct-copy arc arc* [state-texts (hash-set (arc-state-texts arc*) file text)]))
