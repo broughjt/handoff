@@ -130,8 +130,8 @@
           (simple-form-path
            (or option (find-handoff-repository (current-directory)))))
         (match subcommand
-          [(list-subcommand archived?)
-           (handle-list handoff-repository archived?)]
+          [(list-subcommand closed?)
+           (handle-list handoff-repository closed?)]
           [(start-subcommand arc)
            (handle-start handoff-repository
                          (select-arc handoff-repository arc))]
@@ -171,9 +171,9 @@
 ;;; Commands
 
 (: handle-list (-> Path Boolean Status))
-(define (handle-list handoff-repository archived?)
-  (for ([arc-name (in-list ((if archived?
-                                list-archived-arcs
+(define (handle-list handoff-repository closed?)
+  (for ([arc-name (in-list ((if closed?
+                                list-closed-arcs
                                 list-arcs)
                             handoff-repository))])
     (displayln arc-name))
@@ -458,7 +458,7 @@
 
 ;;; Arc helpers
 
-(define archive-tag-prefix "archive/")
+(define closed-tag-prefix "closed/")
 
 (: arc-directory? (-> Path Boolean))
 (define (arc-directory? path)
@@ -472,14 +472,14 @@
              #:when (arc-directory? (build-path handoff-repository entry)))
     (path->string entry)))
 
-(: list-archived-arcs (-> Path (Listof String)))
-(define (list-archived-arcs handoff-repository)
+(: list-closed-arcs (-> Path (Listof String)))
+(define (list-closed-arcs handoff-repository)
   (define output (git handoff-repository
                       "tag"
                       "--list"
-                      (string-append archive-tag-prefix "*")))
+                      (string-append closed-tag-prefix "*")))
   (sort (for/list : (Listof String) ([tag (in-list (string-split output))])
-          (string-trim tag archive-tag-prefix #:right? #f))
+          (string-trim tag closed-tag-prefix #:right? #f))
         string<?))
 
 (: select-arc (-> Path (U String #f) String))

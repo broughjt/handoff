@@ -28,7 +28,7 @@
      workflow-install-subcommand
      workflow-fork-subcommand
      guide-subcommand))
-(struct list-subcommand ([archived? : Boolean]) #:transparent)
+(struct list-subcommand ([closed? : Boolean]) #:transparent)
 (struct start-subcommand ([arc : (U String #f)]) #:transparent)
 (struct check-subcommand ([arc : (U String #f)]
                           [compare? : Boolean])
@@ -106,14 +106,14 @@
 
 (: parse-list-subcommand (-> String (Listof String) list-subcommand))
 (define (parse-list-subcommand program arguments)
-  (define archived? : Boolean #f)
+  (define closed? : Boolean #f)
   (command-line
    #:program program
    #:argv arguments
    #:once-each
-   [("--archived") "List archived arcs instead" (set! archived? #t)]
+   [("--closed") "List closed arcs instead" (set! closed? #t)]
    #:args ()
-   (list-subcommand archived?)))
+   (list-subcommand closed?)))
 
 (: parse-start-subcommand (-> String (Listof String) start-subcommand))
 (define (parse-start-subcommand program arguments)
