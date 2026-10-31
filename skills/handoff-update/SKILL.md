@@ -91,7 +91,6 @@ Brief the user about what changed in the arc, what you promoted or removed, and 
 
 Only when the user says the arc is closed.
 
-1. Check that everything that outlives the arc is already in root topic documents, and move anything that is not. Check that no other arc's `read-first` points into this one.
+1. Check that everything that outlives the arc is already in root topic documents, and move anything that is not.
 2. Run steps 2 through 9. Your log entry should say how the arc ended.
-3. Tag the commit: `git -C .scratch/handoff tag archive/<arc>`. The tag keeps the arc's final state addressable.
-4. Run `git -C .scratch/handoff rm -r <arc>`, then `git -C .scratch/handoff commit -m "<arc>: close"`.
+3. Run `handoff close <arc>`. It tags the commit `closed/<arc>`, which keeps the arc's final state addressable, then removes the arc's directory and commits. If it refuses, follow the direction it gives.
