@@ -22,7 +22,7 @@
 
 (require/typed racket/file
   [call-with-atomic-output-file (-> Path-String (-> Output-Port Path Void) Void)]
-  [make-temporary-directory (-> Path)])
+  [make-temporary-directory (->* () (String #:base-dir (U Path-String #f)) Path)])
 
 (require/typed racket/os
   [gethostname (-> String)])
@@ -89,6 +89,8 @@
          workflow-name?
          workflow-copy-name
          (struct-out reusable-workflow)
+         placeholder-workflow
+         new-arc-files
          fork-name
          (struct-out provenance)
          provenance-line
@@ -291,8 +293,52 @@
   'success)
 
 (: handle-new (-> Path String (U String #f) Status))
-(define (handle-new handoff-repository arc-name workflow)
-  (error 'handle-new "unimplemented"))
+(define (handle-new handoff-repository arc-name workflow-name)
+  (unless (regexp-match? arc-name-regex arc-name)
+    (raise-handoff-error "specify a top-level arc directory name"))
+  (define directory (build-path handoff-repository arc-name))
+  (when (or (file-exists? directory)
+            (directory-exists? directory)
+            (link-exists? directory))
+    (raise-handoff-error "~a already exists in ~a" arc-name handoff-repository))
+  (define project-repository (find-project-repository handoff-repository))
+  (define workflow (and workflow-name (find-reusable-workflow workflow-name)))
+  (define files
+    (new-arc-files arc-name
+                   (if workflow
+                       (scope-path 'handoff
+                                   (string->path
+                                    (workflow-copy-name
+                                     (reusable-workflow-name workflow))))
+                       placeholder-workflow)))
+  ;; The arc is written beside its final place and renamed into it, so that
+  ;; an interrupted or failed run leaves no half-written arc.
+  (define temporary
+    (make-temporary-directory ".new-~a" #:base-dir handoff-repository))
+  (dynamic-wind
+   void
+   (thunk
+     (for ([file (in-list files)])
+       (call-with-output-file (build-path temporary (car file))
+         (λ ([out : Output-Port])
+           (write-string (cdr file) out)
+           (void))))
+     (rename-file-or-directory temporary directory))
+   (thunk
+     (when (directory-exists? temporary)
+       (delete-directory/files temporary))))
+  (printf "created: ~a/\n" arc-name)
+  (printf "files: ~a\n" (string-join (map (inst car String String) files) ", "))
+  (when workflow
+    (print-install workflow (install-workflow handoff-repository workflow)))
+  (define diagnostics
+    (match (read-arc handoff-repository project-repository arc-name)
+      [(? arc? arc) (lint arc)]
+      [(? list? errors) errors]))
+  (displayln "lint, until the arc is written:")
+  (for ([diagnostic (in-list diagnostics)])
+    (printf "  ~a\n" diagnostic))
+  'success)
 
 (: handle-workflow-list (-> Status))
 (define (handle-workflow-list)
@@ -1202,22 +1248,24 @@
 
 ;;; Lint
 
-(define placeholder-check-id "replace-me")
-
 (: lint (-> arc (Listof String)))
 (define (lint arc)
   (define pending (find-pending-log-entry (arc-log arc)))
   (append
+   (if (equal? (start-next (arc-start arc)) placeholder)
+       (list (format "~a: next is the placeholder from handoff new; write the arc's next action"
+                     (build-path (arc-name arc) start-file)))
+       null)
    (for/list : (Listof String) ([path (in-list (arc-missing-references arc))])
      (format "~a: ~a is not a regular file"
              (build-path (arc-name arc) start-file)
              (scope-path->string path)))
    (for/list : (Listof String)
              ([check (in-list (arc-checks arc))]
-              #:when (equal? (check-id check) placeholder-check-id))
+              #:when (equal? (check-id check) placeholder))
      (format "~a: check ~a is the placeholder from handoff new; replace it with the arc's checks"
              (build-path (arc-name arc) checks-file)
-             placeholder-check-id))
+             placeholder))
    (for*/list : (Listof String)
               ([document (in-list (arc-documents arc))]
                [issue (in-value (let ([text (cdr document)])
@@ -1817,6 +1865,48 @@
 (: sha256 (-> Bytes String))
 (define (sha256 contents)
   (bytes->hex-string (sha256-bytes contents)))
+
+;;; New arcs
+
+;; What `handoff new` writes where the arc's own content goes; lint reports
+;; each place it is left.
+(define placeholder "replace-me")
+
+(define placeholder-workflow
+  (scope-path 'arc (string->path (workflow-copy-name placeholder))))
+
+(define placeholder-checks
+  (string-append
+   "# Each check is a claim about the project and a command that acts as a\n"
+   "# mechanical decision procedure for the claim. Checks run in parallel and\n"
+   "# are reported in file order.\n"
+   "# The `timeout` field is measured in seconds; it is optional and defaults to\n"
+   "# " (toml-number default-timeout) ".\n"
+   "[[check]]\n"
+   "id = " (toml-string placeholder) "\n"
+   "claim = " (toml-string "A natural language claim that is either true or false") "\n"
+   "command = " (toml-string
+                 (string-append
+                  "echo \"Replace this placeholder from handoff new with the arc's checks. "
+                  "command is a shell command, run from the project root, that exits 0 when "
+                  "the claim is true, 1 when it is false, and anything else when unknown.\"; exit 3"))
+   "\n"
+   "timeout = " (toml-number default-timeout) "\n"))
+
+;; Each file of a new arc named `arc-name` and its text, with `workflow` as
+;; the workflow in start.toml.
+(: new-arc-files (-> String scope-path (Listof (Pairof String String))))
+(define (new-arc-files arc-name workflow)
+  (list (cons start-file
+              (format "next = ~a\nworkflow = ~a\nread-first = []\n"
+                      (toml-string placeholder)
+                      (toml-string (scope-path->string workflow))))
+        (cons checks-file placeholder-checks)
+        (cons "arc.md" (format "# ~a\n" arc-name))
+        (cons "tasks.md" "# Tasks\n")
+        (cons "do-not-reopen.md" "# Do not reopen\n")
+        (cons "open-questions.md" "# Open questions\n")
+        (cons "review.md" "# Review\n")))
 
 ;;; Markdown
 

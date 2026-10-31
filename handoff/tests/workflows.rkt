@@ -20,6 +20,12 @@
   (call-with-values (thunk (split-provenance text))
                     (inst cons (U provenance #f) String)))
 
+(define spike-copy (scope-path 'handoff (string->path "workflow-spike.md")))
+
+(: new-arc-text (-> String scope-path String))
+(define (new-arc-text file workflow)
+  (cdr (assert (assoc file (new-arc-files "a" workflow)))))
+
 (: paths (-> (Listof String) (Listof Path)))
 (define (paths strings)
   (map string->path strings))
@@ -133,3 +139,26 @@
 
 (test-case "a file without a provenance line is not a verbatim copy"
   (check-equal? (install-status "x" #"x") 'not-verbatim))
+
+(test-case "a new arc's files are its state files, in order"
+  (check-equal? (map (inst car String String) (new-arc-files "a" placeholder-workflow))
+                (list "start.toml" "checks.toml" "arc.md" "tasks.md" "do-not-reopen.md"
+                      "open-questions.md" "review.md")))
+
+(test-case "a new arc's start.toml holds the placeholders"
+  (check-equal? (parse-start (new-arc-text "start.toml" placeholder-workflow)
+                             (string->path "a/start.toml"))
+                (start "replace-me" (scope-path 'arc (string->path "workflow-replace-me.md")) null)))
+
+(test-case "a new arc's start.toml names the workflow it is given"
+  (check-equal? (start-workflow (parse-start (new-arc-text "start.toml" spike-copy)
+                                             (string->path "a/start.toml")))
+                spike-copy))
+
+(test-case "a new arc's checks.toml holds the placeholder check"
+  (check-equal? (map check-id (parse-checks (new-arc-text "checks.toml" placeholder-workflow)
+                                            (string->path "a/checks.toml")))
+                (list "replace-me")))
+
+(test-case "a new arc's arc.md is headed by its name"
+  (check-equal? (new-arc-text "arc.md" placeholder-workflow) "# a\n"))

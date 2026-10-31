@@ -9,6 +9,26 @@
 
 (define source (string->path "a/start.toml"))
 
+;; A new arc as `handoff new` writes it without a workflow, whose placeholder
+;; workflow does not exist.
+(define new-arc
+  (let ([files (new-arc-files "a" placeholder-workflow)])
+    (: text (-> String String))
+    (define (text file)
+      (cdr (assert (assoc file files))))
+    (arc "a"
+         (parse-start (text "start.toml") source)
+         (parse-checks (text "checks.toml") (string->path "a/checks.toml"))
+         (for/hash : (Immutable-HashTable String String)
+                   ([file (in-list (list "start.toml" "arc.md" "tasks.md" "do-not-reopen.md"
+                                         "open-questions.md" "review.md"))])
+           (values file (text file)))
+         #f
+         (list placeholder-workflow)
+         null
+         null
+         null)))
+
 (: omit (-> String (Pairof String Natural)))
 (define (omit text)
   (call-with-values (thunk (omit-finished-tasks text)) (inst cons String Natural)))
@@ -121,6 +141,16 @@
 (test-case "lint reports a reference that is not a regular file"
   (check-equal? (lint (struct-copy arc clean [missing-references (list (scope-path 'arc (string->path "gone.md")))]))
                 (list "a/start.toml: arc:gone.md is not a regular file")))
+
+(test-case "lint reports the placeholder next"
+  (check-equal? (lint (struct-copy arc clean [start (struct-copy start (arc-start clean) [next "replace-me"])]))
+                (list "a/start.toml: next is the placeholder from handoff new; write the arc's next action")))
+
+(test-case "lint reports each placeholder of a new arc"
+  (check-equal? (lint new-arc)
+                (list "a/start.toml: next is the placeholder from handoff new; write the arc's next action"
+                      "a/start.toml: arc:workflow-replace-me.md is not a regular file"
+                      "a/checks.toml: check replace-me is the placeholder from handoff new; replace it with the arc's checks")))
 
 (test-case "lint reports the placeholder check"
   (check-equal? (lint (struct-copy arc clean [checks (list (check "replace-me" "c" "exit 3" 60))]))
