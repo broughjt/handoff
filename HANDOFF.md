@@ -65,7 +65,7 @@ path = "project:src/parse.rs"
 reason = "the recovery hooks go in `Parser::next_token`"
 ```
 
-The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read-first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*).
+The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read-first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*). In a new arc, as written by `handoff new`, `next` holds a placeholder that the linter rejects, and so does `workflow` when no workflow was given.
 
 ### `arc.md`
 
