@@ -234,7 +234,7 @@ Each copy opens with a provenance line saying where it came from:
 | `<!-- forked from <source> (sha256:…) on <date> -->` | `handoff workflow fork` | in the arc |
 | `<!-- created for this arc on <date> -->` | you | in the arc |
 
-The hash is of the source at the time it was copied. Hashing the copy shows whether a verbatim copy has been amended, and hashing the source shows whether the source has moved on since.
+The hash is of the source at the time it was copied, and the script writes the date in UTC. Hashing the copy shows whether a verbatim copy has been amended, and hashing the source shows whether the source has moved on since.
 
 - Never amend a verbatim copy, since other arcs may run against it. Fork it with `handoff workflow fork <arc> <source> [<name>]` and amend the fork.
 - Amend forked and created workflows in place. Date the change in the file and record it in the update's log entry.
