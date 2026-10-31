@@ -58,6 +58,22 @@
   (check-equal? (map workflow-name? (list "README" "x_y" ""))
                 (list #f #f #f)))
 
+(test-case "a fork of a reusable workflow takes its name"
+  (check-equal? (fork-name (reusable-workflow "spike" (string->path "/w/spike.md")))
+                "spike"))
+
+(test-case "a fork of a reference takes its file name without workflow- and .md"
+  (check-equal? (fork-name (scope-path 'arc (string->path "workflow-review.md")))
+                "review"))
+
+(test-case "a fork of a reference without the workflow- prefix takes its file name without .md"
+  (check-equal? (fork-name (scope-path 'project (string->path "docs/review.md")))
+                "review"))
+
+(test-case "a fork of a reference whose file name is not a workflow name takes it anyway"
+  (check-equal? (fork-name (scope-path 'handoff (string->path "Review_Notes.md")))
+                "Review_Notes"))
+
 (test-case "a workflow's copy is named workflow-<name>.md"
   (check-equal? (workflow-copy-name "spike") "workflow-spike.md"))
 

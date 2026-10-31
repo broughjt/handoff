@@ -169,11 +169,6 @@
    #:argv arguments
    #:usage-help
    "Commands:"
-   ;; TODO: (later, when we do the workflow commands) What is a "reusable" workflow as opposed to a "workflow file"?
-   ;; TODO: (later, ditto) Why not:
-   ;; list workflows
-   ;; copy a workflow verbatim to the root of the handoff repository
-   ;; copy a workflow to the root of the handoff repository so it can be modified
    "  list                 list the reusable workflows"
    "  install <name>       copy a reusable workflow verbatim to the handoff repository's root"
    "  fork <arc> <source> [<name>]  copy a reusable workflow or workflow file into the arc as workflow-<name>.md"

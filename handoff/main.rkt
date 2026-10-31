@@ -88,6 +88,8 @@
          data-directories
          workflow-name?
          workflow-copy-name
+         (struct-out reusable-workflow)
+         fork-name
          (struct-out provenance)
          provenance-line
          split-provenance
@@ -318,7 +320,48 @@
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
 (define (handle-workflow-fork handoff-repository arc-name source name)
-  (error 'handle-workflow-fork "unimplemented"))
+  (define project-repository (find-project-repository handoff-repository))
+  (define found : (U reusable-workflow scope-path)
+    (if (string-contains? source ":")
+        (expect-scope-path (hash 'source source) 'source "handoff workflow fork")
+        (find-reusable-workflow source)))
+  (define-values (description source-path)
+    (match found
+      [(? reusable-workflow?)
+       (values (format "workflow ~a" (reusable-workflow-name found))
+               (reusable-workflow-path found))]
+      [(? scope-path?)
+       (values (scope-path->string found)
+               (resolve-scope-path handoff-repository
+                                   arc-name
+                                   project-repository
+                                   found))]))
+  (unless (file-exists? source-path)
+    (raise-handoff-error "~a is not a regular file" source))
+  (define workflow-name (or name (fork-name found)))
+  (unless (workflow-name? workflow-name)
+    (raise-handoff-error "~a is not a workflow name: lowercase letters, digits and hyphens; give one as <name>"
+                         workflow-name))
+  (define file (workflow-copy-name workflow-name))
+  (define path (build-path handoff-repository arc-name file))
+  (when (or (file-exists? path) (directory-exists? path) (link-exists? path))
+    (raise-handoff-error "arc:~a already exists; give another name as <name>" file))
+  (define contents (file->bytes source-path))
+  (define-values (_provenance text)
+    (split-provenance (bytes->string/utf-8 contents #\uFFFD)))
+  (call-with-output-file path
+    (λ ([out : Output-Port])
+      (write-string (provenance-line 'forked
+                                     description
+                                     contents
+                                     (posix->moment (current-seconds) 0))
+                    out)
+      (write-string text out)
+      (void))
+    #:exists 'error)
+  (printf "forked: arc:~a\n" file)
+  (printf "from: ~a\n" (if (reusable-workflow? found) source-path source))
+  'success)
 
 (: handle-guide (-> Status))
 (define (handle-guide)
@@ -1665,6 +1708,20 @@
 (: workflow-name? (-> String Boolean))
 (define (workflow-name? name)
   (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
+
+;; The name a fork takes when none is given: a reusable workflow's name, or a
+;; reference's file name without .md and a leading workflow-.
+(: fork-name (-> (U reusable-workflow scope-path) String))
+(define (fork-name source)
+  (match source
+    [(reusable-workflow name _) name]
+    [(scope-path _ path)
+     (define file (file-name-from-path path))
+     (if file
+         (regexp-replace #px"^workflow-"
+                         (regexp-replace #px"\\.md$" (path->string file) "")
+                         "")
+         "")]))
 
 (: workflow-copy-name (-> String String))
 (define (workflow-copy-name name)
