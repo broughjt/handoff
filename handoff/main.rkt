@@ -92,6 +92,8 @@
          build-start-report
          print-start
          commit-subject-or-refuse
+         references-into-arc
+         closing-tag-or-refuse
          workflow-name?
          workflow-copy-name
          (struct-out reusable-workflow)
@@ -148,6 +150,8 @@
           [(update-subcommand 'commit arc)
            (handle-update-commit handoff-repository
                                  (select-arc handoff-repository arc))]
+          [(close-subcommand arc)
+           (handle-close handoff-repository arc)]
           [(new-subcommand arc workflow)
            (handle-new handoff-repository arc workflow)]
           [(workflow-install-subcommand name)
@@ -295,6 +299,48 @@
   (printf "committed: ~a ~a\n"
           (git handoff-repository "rev-parse" "--short=12" "HEAD")
           subject)
+  (print-dirty (read-dirty handoff-repository))
+  'success)
+
+(: handle-close (-> Path String Status))
+(define (handle-close handoff-repository arc-name)
+  (unless (and (regexp-match? arc-name-regex arc-name)
+               (arc-directory? (build-path handoff-repository arc-name)))
+    (raise-handoff-error "~a is not an arc in ~a" arc-name handoff-repository))
+  (define tag
+    (closing-tag-or-refuse
+     arc-name
+     (car (read-log handoff-repository arc-name))
+     (string-split (git handoff-repository
+                        "--no-optional-locks" "status" "--porcelain"
+                        "--untracked-files=all" "--" arc-name)
+                   "\n")
+     (string-split (git handoff-repository "diff" "--cached" "--name-only")
+                   "\n")
+     (references-into-arc arc-name (read-other-starts handoff-repository arc-name))
+     (and (git* handoff-repository
+                "rev-parse" "--verify" "--quiet"
+                (string-append "refs/tags/" closed-tag-prefix arc-name))
+          #t)))
+  ;; The last commit to touch the arc, normally the closing update, which
+  ;; need not be HEAD when another arc has committed since.
+  (define target (git handoff-repository "rev-list" "-1" "HEAD" "--" arc-name))
+  (define subject (format "~a: close" arc-name))
+  (git handoff-repository
+       "tag" "--annotate" "--message" (format "~a: closed" arc-name) tag target)
+  (with-handlers ([exn:fail? (λ ([error : exn])
+                               (git* handoff-repository "checkout" "HEAD" "--" arc-name)
+                               (git* handoff-repository "tag" "--delete" tag)
+                               (raise error))])
+    (git handoff-repository "rm" "-r" "--quiet" "--" arc-name)
+    (git handoff-repository "commit" "--quiet" "--message" subject))
+  (printf "tagged: ~a at ~a\n"
+          tag
+          (git handoff-repository "log" "-1" "--format=%h %s" "--abbrev=12" target))
+  (printf "committed: ~a ~a\n"
+          (git handoff-repository "rev-parse" "--short=12" "HEAD")
+          subject)
+  (printf "read with: git -C ~a show ~a:~a/<file>\n" handoff-repository tag arc-name)
   (print-dirty (read-dirty handoff-repository))
   'success)
 
@@ -1694,6 +1740,72 @@
                           (describe-head branch head)
                           (build-path path results-file))]
     [else (format "~a: ~a" (arc-name arc) headline)]))
+
+;;; Closing arcs
+
+(: read-other-starts (-> Path String (Listof (Pairof String start))))
+(define (read-other-starts handoff-repository arc-name)
+  (for/list : (Listof (Pairof String start))
+            ([other (in-list (list-arcs handoff-repository))]
+             #:unless (equal? other arc-name))
+    (define path (build-path other start-file))
+    (cons other
+          (parse-start (file->string (build-path handoff-repository path)) path))))
+
+;; Each reference in another arc's start.toml to a file inside the arc.
+(: references-into-arc (-> String (Listof (Pairof String start)) (Listof String)))
+(define (references-into-arc arc-name others)
+  (: into-arc? (-> scope-path Boolean))
+  (define (into-arc? path)
+    (and (eq? (scope-path-scope path) 'handoff)
+         (equal? (car (explode-path (scope-path-path path)))
+                 (string->path arc-name))))
+  (for*/list : (Listof String)
+             ([other (in-list others)]
+              [field (in-list
+                      (cons (cons "workflow" (start-workflow (cdr other)))
+                            (map (λ ([read : read-first])
+                                   (cons "read-first" (read-first-path read)))
+                                 (start-read-first (cdr other)))))]
+              #:when (into-arc? (cdr field)))
+    (format "~a: ~a ~a"
+            (build-path (car other) start-file)
+            (car field)
+            (scope-path->string (cdr field)))))
+
+;; `handoff close`'s refusals, as a function of the arc's log, the lines of
+;; `git status` under the arc, the staged paths, the references into the arc
+;; from other arcs, and whether the tag exists.
+(: closing-tag-or-refuse (-> String (Listof log-entry) (Listof String) (Listof String)
+                             (Listof String) Boolean String))
+(define (closing-tag-or-refuse arc-name entries dirty staged references tag-exists?)
+  (define tag (string-append closed-tag-prefix arc-name))
+  (: indent (-> (Listof String) String))
+  (define (indent lines)
+    (string-join (map (λ ([line : String]) (string-append "  " line)) lines) "\n"))
+  (cond
+    [(find-pending-log-entry entries)
+     => (λ ([pending : log-entry])
+          (raise-handoff-error "~a has a pending log entry; commit it with handoff update --commit or remove it first"
+                               (build-path arc-name
+                                           log-directory
+                                           (number->string (log-entry-number pending)))))]
+    [(not (find-last-committed-log-entry entries))
+     (raise-handoff-error "~a has no committed log entry; record the closing handoff first"
+                          arc-name)]
+    [(pair? dirty)
+     (raise-handoff-error "~a has uncommitted changes; commit or remove them first:\n~a"
+                          arc-name
+                          (indent dirty))]
+    [(pair? staged)
+     (raise-handoff-error "the index has staged changes; commit or unstage them first:\n~a"
+                          (indent staged))]
+    [(pair? references)
+     (raise-handoff-error "other arcs refer to files in ~a; change their start.toml first:\n~a"
+                          arc-name
+                          (indent references))]
+    [tag-exists? (raise-handoff-error "the tag ~a already exists" tag)]
+    [else tag]))
 
 ;;; Reusable workflows
 

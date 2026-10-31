@@ -9,6 +9,7 @@
          (struct-out check-subcommand)
          (struct-out lint-subcommand)
          (struct-out update-subcommand)
+         (struct-out close-subcommand)
          (struct-out new-subcommand)
          (struct-out workflow-list-subcommand)
          (struct-out workflow-install-subcommand)
@@ -23,6 +24,7 @@
      check-subcommand
      lint-subcommand
      update-subcommand
+     close-subcommand
      new-subcommand
      workflow-list-subcommand
      workflow-install-subcommand
@@ -37,6 +39,7 @@
 (struct update-subcommand ([step : (U 'begin 'commit)]
                            [arc : (U String #f)])
   #:transparent)
+(struct close-subcommand ([arc : String]) #:transparent)
 (struct new-subcommand ([arc : String]
                         [workflow : (U String #f)])
   #:transparent)
@@ -66,6 +69,7 @@
    "  check     run the commands in checks.toml and report their results"
    "  lint      validate the expected structure of a handoff arc"
    "  update    record a log entry"
+   "  close     tag an arc's last handoff and remove the arc"
    "  new       create an arc"
    "  workflow  list, install, or fork reusable workflows"
    "  guide     print the path of the handoff guide"
@@ -90,10 +94,11 @@
     [("check") (parse-check-subcommand program arguments)]
     [("lint") (parse-lint-subcommand program arguments)]
     [("update") (parse-update-subcommand program arguments)]
+    [("close") (parse-close-subcommand program arguments)]
     [("new") (parse-new-subcommand program arguments)]
     [("workflow") (parse-workflow-subcommand program arguments)]
     [("guide") (parse-guide-subcommand program arguments)]
-    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, new, workflow, or guide"
+    [else (raise-handoff-error "unknown command ~a; expected list, start, check, lint, update, close, new, workflow, or guide"
                                subcommand)]))
 
 (: parse-arc-argument (-> String (Listof String) (U String #f)))
@@ -150,6 +155,13 @@
    (update-subcommand
     (or step (raise-handoff-error "update requires --begin or --commit"))
     (and arc (assert arc string?)))))
+
+(: parse-close-subcommand (-> String (Listof String) close-subcommand))
+(define (parse-close-subcommand program arguments)
+  (command-line #:program program
+                #:argv arguments
+                #:args (arc)
+                (close-subcommand (assert arc string?))))
 
 (: parse-new-subcommand (-> String (Listof String) new-subcommand))
 (define (parse-new-subcommand program arguments)
