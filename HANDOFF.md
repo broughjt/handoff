@@ -18,7 +18,7 @@ An arc is a top-level directory of the handoff repository that contains a `start
 
 Arcs are for tracking one goal across multiple sessions. They are not intended to serve as a full-blown project management system. Specifically, do not treat the handoff system as a system for tracking future work beyond the scope of the arc(s) you are working on. When the user mentions future work outside the current arcs, leave it with them, unless they want to start an arc for it. Do not open a backlog, a queue, or a future work section as part of an arc.
 
-An arc closes only when the user says it is finished. Closing it with handoff-update's `close` argument records a closing log entry, tags that commit `archive/<arc>`, and removes the arc's directory. Before that, move anything that should outlive the arc into root topic documents (see *Storing findings*), since everything left in the arc is removed with it. Git keeps the history: `handoff list --archived` lists closed arcs, and `git -C .scratch/handoff show archive/<arc>:<arc>/<file>` reads a file as it was when the arc closed.
+An arc closes only when the user says it is finished. Closing it with handoff-update's `close` argument records a closing log entry, then runs `handoff close <arc>`, which tags that entry's commit `closed/<arc>` and removes the arc's directory. Before that, move anything that should outlive the arc into root topic documents (see *Storing findings*), since everything left in the arc is removed with it. Git keeps the history: `handoff list --closed` lists closed arcs, and `git -C .scratch/handoff show closed/<arc>:<arc>/<file>` reads a file as it was when the arc closed.
 
 Arc directories are expected to contain the following:
 
@@ -265,12 +265,13 @@ Commands shown with `[arc]` take the arc as an optional last argument, which may
 
 | Command | Does |
 |---|---|
-| `handoff list [--archived]` | list active arcs, or closed ones from their `archive/<arc>` tags |
+| `handoff list [--closed]` | list active arcs, or closed ones from their `closed/<arc>` tags |
 | `handoff start [arc]` | produce a starting report, including the arc's files inlined, project and handoff repository status, and the checks compared against the last handoff. |
 | `handoff check [--compare] [arc]` | run the checks and print the results (comparing against the last handoff when `--compare` is given) |
 | `handoff lint [arc]` | validate the layout, `start.toml`, references, `checks.toml` and log entries |
 | `handoff update --begin [arc]` | run the checks, record their results in a pending log entry, and print the path of its `entry.md` |
 | `handoff update --commit [arc]` | validate and commit the pending log entry, the arc, and anything staged |
+| `handoff close <arc>` | tag the arc's last handoff `closed/<arc>`, then remove the arc's directory and commit |
 | `handoff new <arc> [<workflow>]` | create an arc's files (uncommitted) |
 | `handoff workflow list` | list the workflows kept for reuse across projects |
 | `handoff workflow install <name>` | make a verbatim copy of a workflow at the handoff repository root |
