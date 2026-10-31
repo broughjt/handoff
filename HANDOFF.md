@@ -150,7 +150,7 @@ An update records a handoff. It usually happens at the end of a session, but it 
 
 To perform an update, follow these steps:
 
-1. Execute `handoff update --begin [arc]`. This runs the linter on the arc, refusing on errors; runs the checks, recording the results into `results.toml` in the pending log entry `log/<N>/`; and prints the check results and the path of `entry.md`.
+1. Execute `handoff update --begin [arc]`. This runs the linter on the arc, refusing on errors; runs the checks, recording the results into `results.toml` in the pending log entry `log/<N>/`; and prints the check results, compared against those of the last handoff, and the path of `entry.md`.
 2. You write a log entry in `log/<N>/entry.md` and update the arc's state.
 3. Execute `handoff update --commit [arc]`. This runs validation and then commits the whole arc directory, including the log entry, together with anything you staged, with the subject `<arc>: <headline>`, where the headline is the log entry's opening heading. Files outside the arc that the update changed, such as root topic documents or a verbatim workflow copy, are committed only if you stage them first with `git -C .scratch/handoff add`.
 
