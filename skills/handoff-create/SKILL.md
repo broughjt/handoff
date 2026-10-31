@@ -69,7 +69,7 @@ Then fill in every file:
 - `tasks.md`, `do-not-reopen.md`, `open-questions.md` from the interview.
 - `checks.toml`: replace the placeholder with real checks, cheapest catch-all first. Run `handoff check` until each one executes as intended. False check outcomes are okay, especially at the beginning of an arc.
 - Topic documents: facts you learned in step 3 that a later session would otherwise have to rediscover, recorded as *Storing findings* in HANDOFF.md describes.
-- `start.toml` last, once everything else is settled, replacing the placeholder `next`, and the placeholder `workflow` if `handoff new` was not given one.
+- `start.toml` last, once everything else is settled, replacing the placeholder `next` and the placeholder `workflow` if `handoff new` was not passed one.
 
 Decisions from the interview are `(user, date)`. Anything you inferred and the user did not confirm is still an agent proposal.
 

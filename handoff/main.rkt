@@ -18,11 +18,18 @@
 
 (require/typed racket/base
   [current-inexact-monotonic-milliseconds (-> Flonum)]
+  [file-or-directory-type
+   (-> Path-String (U 'file 'directory 'link 'directory-link #f))]
   [(alarm-evt monotonic-alarm-evt) (-> Real True (Evtof Any))])
 
 (require/typed racket/file
   [call-with-atomic-output-file (-> Path-String (-> Output-Port Path Void) Void)]
   [make-temporary-directory (->* () (String #:base-dir (U Path-String #f)) Path)])
+
+(require/typed basedir
+  [list-data-dirs
+   (->* () (#:program Path-String #:only-existing? Any) (Listof Path))]
+  [list-data-files (->* (Path-String) (#:program Path-String) (Listof Path))])
 
 (require/typed racket/os
   [gethostname (-> String)])
@@ -85,17 +92,16 @@
          build-start-report
          print-start
          commit-subject-or-refuse
-         data-directories
          workflow-name?
          workflow-copy-name
          (struct-out reusable-workflow)
          placeholder-workflow
          new-arc-files
-         fork-name
-         (struct-out provenance)
-         provenance-line
-         split-provenance
-         install-status)
+         workflow-fork-name
+         (struct-out workflow-provenance)
+         format-workflow-provenance-line
+         split-workflow-provenance
+         workflow-install-status)
 
 (module+ main
   (exit (main (current-command-line-arguments))))
@@ -297,20 +303,17 @@
   (unless (regexp-match? arc-name-regex arc-name)
     (raise-handoff-error "specify a top-level arc directory name"))
   (define directory (build-path handoff-repository arc-name))
-  (when (or (file-exists? directory)
-            (directory-exists? directory)
-            (link-exists? directory))
+  (when (file-or-directory-type directory)
     (raise-handoff-error "~a already exists in ~a" arc-name handoff-repository))
   (define project-repository (find-project-repository handoff-repository))
   (define workflow (and workflow-name (find-reusable-workflow workflow-name)))
-  (define files
-    (new-arc-files arc-name
-                   (if workflow
-                       (scope-path 'handoff
-                                   (string->path
-                                    (workflow-copy-name
-                                     (reusable-workflow-name workflow))))
-                       placeholder-workflow)))
+  (define workflow-path
+    (if workflow
+        (scope-path 'handoff
+                    (string->path (workflow-copy-name
+                                   (reusable-workflow-name workflow))))
+        placeholder-workflow))
+  (define files (new-arc-files arc-name workflow-path))
   ;; The arc is written beside its final place and renamed into it, so that
   ;; an interrupted or failed run leaves no half-written arc.
   (define temporary
@@ -330,7 +333,7 @@
   (printf "created: ~a/\n" arc-name)
   (printf "files: ~a\n" (string-join (map (inst car String String) files) ", "))
   (when workflow
-    (print-install workflow (install-workflow handoff-repository workflow)))
+    (print-workflow-install workflow (install-workflow handoff-repository workflow)))
   (define diagnostics
     (match (read-arc handoff-repository project-repository arc-name)
       [(? arc? arc) (lint arc)]
@@ -355,13 +358,13 @@
        (newline)
        (printf "name: ~a\n" (reusable-workflow-name workflow))
        (printf "path: ~a\n" path)
-       (printf "summary: ~a\n" (summary (file->string path))))])
+       (printf "summary: ~a\n" (one-line-summary (file->string path))))])
   'success)
 
 (: handle-workflow-install (-> Path String Status))
 (define (handle-workflow-install handoff-repository name)
   (define workflow (find-reusable-workflow name))
-  (print-install workflow (install-workflow handoff-repository workflow))
+  (print-workflow-install workflow (install-workflow handoff-repository workflow))
   'success)
 
 (: handle-workflow-fork (-> Path String String (U String #f) Status))
@@ -369,7 +372,9 @@
   (define project-repository (find-project-repository handoff-repository))
   (define found : (U reusable-workflow scope-path)
     (if (string-contains? source ":")
-        (expect-scope-path (hash 'source source) 'source "handoff workflow fork")
+        (expect-scope-path (hash 'source source)
+                           'source
+                           "handoff workflow fork")
         (find-reusable-workflow source)))
   (define-values (description source-path)
     (match found
@@ -384,23 +389,24 @@
                                    found))]))
   (unless (file-exists? source-path)
     (raise-handoff-error "~a is not a regular file" source))
-  (define workflow-name (or name (fork-name found)))
+  (define workflow-name (or name (workflow-fork-name found)))
   (unless (workflow-name? workflow-name)
     (raise-handoff-error "~a is not a workflow name: lowercase letters, digits and hyphens; give one as <name>"
                          workflow-name))
   (define file (workflow-copy-name workflow-name))
   (define path (build-path handoff-repository arc-name file))
-  (when (or (file-exists? path) (directory-exists? path) (link-exists? path))
-    (raise-handoff-error "arc:~a already exists; give another name as <name>" file))
+  (when (file-or-directory-type path)
+    (raise-handoff-error "arc:~a already exists; give another name as <name>"
+                         file))
   (define contents (file->bytes source-path))
   (define-values (_provenance text)
-    (split-provenance (bytes->string/utf-8 contents #\uFFFD)))
+    (split-workflow-provenance (bytes->string/utf-8 contents #\uFFFD)))
   (call-with-output-file path
     (λ ([out : Output-Port])
-      (write-string (provenance-line 'forked
-                                     description
-                                     contents
-                                     (posix->moment (current-seconds) 0))
+      (write-string (format-workflow-provenance-line 'forked
+                                                     description
+                                                     contents
+                                                     (posix->moment (current-seconds) 0))
                     out)
       (write-string text out)
       (void))
@@ -411,15 +417,13 @@
 
 (: handle-guide (-> Status))
 (define (handle-guide)
-  (define directories (read-data-directories))
-  (define path
-    (or (findf file-exists?
-               (for/list : (Listof Path) ([directory (in-list directories)])
-                 (build-path directory "handoff" guide-file)))
-        (raise-handoff-error "no handoff/~a in ~a"
-                             guide-file
-                             (string-join (map path->string directories) ", "))))
-  (displayln path)
+  (match (list-data-files guide-file #:program program-name)
+    [(cons path _) (displayln path)]
+    ['()
+     (raise-handoff-error "no ~a in ~a"
+                          guide-file
+                          (string-join (map path->string (handoff-data-directories))
+                                       ", "))])
   'success)
 
 ;;; Repositories
@@ -1515,7 +1519,7 @@
              #:unless (let ([text (cdr document)])
                         (and text (verbatim-copy? text))))
     (define text (cdr document))
-    (cons (car document) (if text (summary text) ""))))
+    (cons (car document) (if text (one-line-summary text) ""))))
 
 (: print-start (-> start-report Void))
 (define (print-start report)
@@ -1692,38 +1696,17 @@
 
 (struct reusable-workflow ([name : String] [path : Path]) #:transparent)
 
-;; $XDG_DATA_HOME (default ~/.local/share), then $XDG_DATA_DIRS (default
-;; /usr/local/share:/usr/share). Empty and relative entries are ignored, as
-;; the XDG spec says.
-(: data-directories (-> (U String #f) (U String #f) Path (Listof Path)))
-(define (data-directories data-home data-dirs home)
-  (: absolute (-> String (U Path #f)))
-  (define (absolute entry)
-    (and (non-empty-string? entry)
-         (absolute-path? entry)
-         (string->path entry)))
-  (cons (or (and data-home (absolute data-home))
-            (build-path home ".local" "share"))
-        (filter-map absolute
-                    (string-split (if (and data-dirs (non-empty-string? data-dirs))
-                                      data-dirs
-                                      "/usr/local/share:/usr/share")
-                                  ":"))))
+(define program-name "handoff")
 
-(: read-data-directories (-> (Listof Path)))
-(define (read-data-directories)
-  (data-directories (getenv "XDG_DATA_HOME")
-                    (getenv "XDG_DATA_DIRS")
-                    (find-system-path 'home-dir)))
+(: handoff-data-directories (-> (Listof Path)))
+(define (handoff-data-directories)
+  (list-data-dirs #:program program-name #:only-existing? #f))
 
 (: workflow-directories (-> (Listof Path)))
 (define (workflow-directories)
-  (for/list ([directory (in-list (read-data-directories))])
-    (build-path directory "handoff" "workflows")))
+  (for/list ([directory (in-list (handoff-data-directories))])
+    (build-path directory "workflows")))
 
-;; Every reusable workflow in `directories`, in search order. A file reached
-;; twice, as when one data directory is a profile linking to the package that
-;; another names directly, is listed once.
 (: read-reusable-workflows (-> (Listof Path) (Listof reusable-workflow)))
 (define (read-reusable-workflows directories)
   (define-values (workflows _seen)
@@ -1752,15 +1735,12 @@
       (raise-handoff-error "no reusable workflow named ~a; see handoff workflow list"
                            name)))
 
-;; Lowercase only, so that a README.md beside the workflows is not one.
 (: workflow-name? (-> String Boolean))
 (define (workflow-name? name)
   (regexp-match? #px"^[a-z0-9][a-z0-9-]*$" name))
 
-;; The name a fork takes when none is given: a reusable workflow's name, or a
-;; reference's file name without .md and a leading workflow-.
-(: fork-name (-> (U reusable-workflow scope-path) String))
-(define (fork-name source)
+(: workflow-fork-name (-> (U reusable-workflow scope-path) String))
+(define (workflow-fork-name source)
   (match source
     [(reusable-workflow name _) name]
     [(scope-path _ path)
@@ -1775,48 +1755,47 @@
 (define (workflow-copy-name name)
   (string-append "workflow-" name ".md"))
 
-(define-type Install-Outcome (U 'installed 'unchanged 'changed 'not-verbatim))
+(define-type Workflow-Install-Outcome (U 'installed 'unchanged 'changed 'not-verbatim))
 
-;; Copies the reusable workflow verbatim to the root of the handoff
-;; repository, unless a copy is already there.
-(: install-workflow (-> Path reusable-workflow Install-Outcome))
+(: install-workflow (-> Path reusable-workflow Workflow-Install-Outcome))
 (define (install-workflow handoff-repository workflow)
   (define name (reusable-workflow-name workflow))
   (define path (build-path handoff-repository (workflow-copy-name name)))
   (define contents (file->bytes (reusable-workflow-path workflow)))
   (cond
-    [(file-exists? path) (install-status (file->string path) contents)]
+    [(file-exists? path) (workflow-install-status (file->string path) contents)]
     [(or (directory-exists? path) (link-exists? path))
      (raise-handoff-error "handoff:~a exists and is not a regular file"
                           (workflow-copy-name name))]
     [else
      (call-with-output-file path
        (λ ([out : Output-Port])
-         (write-string (provenance-line 'copied
-                                        (format "workflow ~a" name)
-                                        contents
-                                        (posix->moment (current-seconds) 0))
+         (write-string (format-workflow-provenance-line 'copied
+                                                        (format "workflow ~a" name)
+                                                        contents
+                                                        (posix->moment (current-seconds) 0))
                        out)
          (write-bytes contents out)
          (void))
        #:exists 'error)
      'installed]))
 
-;; Whether `copy` is a verbatim copy of a reusable workflow whose bytes are
-;; now `contents`.
-(: install-status (-> String Bytes (U 'unchanged 'changed 'not-verbatim)))
-(define (install-status copy contents)
-  (define-values (provenance _text) (split-provenance copy))
+(: workflow-install-status (-> String Bytes (U 'unchanged 'changed 'not-verbatim)))
+(define (workflow-install-status copy contents)
+  (define-values (provenance _text) (split-workflow-provenance copy))
   (cond
-    [(not (and provenance (eq? (provenance-how provenance) 'copied)))
+    [(not (and provenance (eq? (workflow-provenance-how provenance) 'copied)))
      'not-verbatim]
-    [(equal? (provenance-hash provenance) (sha256 contents)) 'unchanged]
+    [(equal? (workflow-provenance-hash provenance)
+             (bytes->hex-string (sha256-bytes contents)))
+     'unchanged]
     [else 'changed]))
 
-(: print-install (-> reusable-workflow Install-Outcome Void))
-(define (print-install workflow outcome)
+(: print-workflow-install (-> reusable-workflow Workflow-Install-Outcome Void))
+(define (print-workflow-install workflow outcome)
   (define reference
-    (string-append "handoff:" (workflow-copy-name (reusable-workflow-name workflow))))
+    (string-append "handoff:"
+                   (workflow-copy-name (reusable-workflow-name workflow))))
   (case outcome
     [(installed)
      (printf "installed: ~a\n" reference)
@@ -1829,47 +1808,36 @@
         [(changed) "the reusable workflow has changed since it was copied"]
         [else "it is not a verbatim copy"]))]))
 
-;;; Provenance lines
+;;; Workflow provenance lines
 
-(struct provenance ([how : (U 'copied 'forked 'created)]
-                    [hash : (U String #f)]) ; #f for created
+(struct workflow-provenance ([how : (U 'copied 'forked 'created)]
+                             [hash : (U String #f)]) ; #f for created
   #:transparent)
 
-;; The line opening a copy of `contents`, the bytes of the file `source`
-;; describes ("workflow spike" or a reference), made at `now`. The date is
-;; UTC.
-(: provenance-line (-> (U 'copied 'forked) String Bytes Moment String))
-(define (provenance-line how source contents now)
+(: format-workflow-provenance-line (-> (U 'copied 'forked) String Bytes Moment String))
+(define (format-workflow-provenance-line how source contents now)
   (format "<!-- ~a from ~a (sha256:~a) on ~a~a -->\n"
           how
           source
-          (sha256 contents)
+          (bytes->hex-string (sha256-bytes contents))
           (~t (adjust-timezone now 0) "yyyy-MM-dd")
           (if (eq? how 'copied) "; verbatim" "")))
 
-;; The provenance on the first line of `text`, if it has one, and the text
-;; after that line.
-(: split-provenance (-> String (Values (U provenance #f) String)))
-(define (split-provenance text)
+(: split-workflow-provenance (-> String (Values (U workflow-provenance #f) String)))
+(define (split-workflow-provenance text)
   (match (regexp-match #px"^<!-- (copied|forked|created) ([^\n]*)-->(?:\n|$)" text)
     [(list line (? string? how) (? string? details))
      (define hash (regexp-match #px"\\(sha256:([0-9a-f]{64})\\)" details))
-     (values (provenance (case how
-                           [("copied") 'copied]
-                           [("forked") 'forked]
-                           [else 'created])
-                         (and hash (second hash)))
+     (values (workflow-provenance (case how
+                                    [("copied") 'copied]
+                                    [("forked") 'forked]
+                                    [else 'created])
+                                  (and hash (second hash)))
              (substring text (string-length line)))]
     [_ (values #f text)]))
 
-(: sha256 (-> Bytes String))
-(define (sha256 contents)
-  (bytes->hex-string (sha256-bytes contents)))
-
 ;;; New arcs
 
-;; What `handoff new` writes where the arc's own content goes; lint reports
-;; each place it is left.
 (define placeholder "replace-me")
 
 (define placeholder-workflow
@@ -1893,8 +1861,6 @@
    "\n"
    "timeout = " (toml-number default-timeout) "\n"))
 
-;; Each file of a new arc named `arc-name` and its text, with `workflow` as
-;; the workflow in start.toml.
 (: new-arc-files (-> String scope-path (Listof (Pairof String String))))
 (define (new-arc-files arc-name workflow)
   (list (cons start-file
@@ -1916,12 +1882,11 @@
 (define (first-paragraph text)
   (define (skip? [line : String])
     (or (string=? (string-trim line) "") (regexp-match? #px"^ {0,3}#" line)))
-  (define lines (string-split (strip-provenance text) "\n" #:trim? #f))
+  (define lines (string-split (strip-workflow-provenance text) "\n" #:trim? #f))
   (takef (dropf lines skip?) (negate skip?)))
 
-;; The first paragraph on one line.
-(: summary (-> String String))
-(define (summary text)
+(: one-line-summary (-> String String))
+(define (one-line-summary text)
   (string-join (map string-trim (first-paragraph text))))
 
 (define non-prose-openings
@@ -1945,12 +1910,12 @@
 
 (: verbatim-copy? (-> String Boolean))
 (define (verbatim-copy? text)
-  (define-values (provenance _text) (split-provenance text))
-  (and provenance (eq? (provenance-how provenance) 'copied)))
+  (define-values (provenance _text) (split-workflow-provenance text))
+  (and provenance (eq? (workflow-provenance-how provenance) 'copied)))
 
-(: strip-provenance (-> String String))
-(define (strip-provenance text)
-  (define-values (_provenance rest) (split-provenance text))
+(: strip-workflow-provenance (-> String String))
+(define (strip-workflow-provenance text)
+  (define-values (_provenance rest) (split-workflow-provenance text))
   rest)
 
 ;; The text of the heading on an entry's first nonblank line.

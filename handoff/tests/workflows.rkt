@@ -8,51 +8,21 @@
 (require/typed gregor
   [iso8601->moment (-> String Moment)])
 
-(define home (string->path "/home/u"))
-
 ;; The SHA-256 of #"x", as sha256sum prints it.
 (define x-hash "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881")
 
 (define now (iso8601->moment "2026-10-31T12:00:00Z"))
 
-(: split (-> String (Pairof (U provenance #f) String)))
+(: split (-> String (Pairof (U workflow-provenance #f) String)))
 (define (split text)
-  (call-with-values (thunk (split-provenance text))
-                    (inst cons (U provenance #f) String)))
+  (call-with-values (thunk (split-workflow-provenance text))
+                    (inst cons (U workflow-provenance #f) String)))
 
 (define spike-copy (scope-path 'handoff (string->path "workflow-spike.md")))
 
 (: new-arc-text (-> String scope-path String))
 (define (new-arc-text file workflow)
   (cdr (assert (assoc file (new-arc-files "a" workflow)))))
-
-(: paths (-> (Listof String) (Listof Path)))
-(define (paths strings)
-  (map string->path strings))
-
-(test-case "the data home comes before the data directories"
-  (check-equal? (data-directories "/data" "/a:/b" home)
-                (paths (list "/data" "/a" "/b"))))
-
-(test-case "the data home defaults to ~/.local/share"
-  (check-equal? (data-directories #f "/a" home)
-                (paths (list "/home/u/.local/share" "/a"))))
-
-(test-case "the data directories default to /usr/local/share and /usr/share"
-  (check-equal? (data-directories "/data" #f home)
-                (paths (list "/data" "/usr/local/share" "/usr/share"))))
-
-(test-case "an empty variable takes the default"
-  (check-equal? (data-directories "" "" home)
-                (paths (list "/home/u/.local/share" "/usr/local/share" "/usr/share"))))
-
-(test-case "a relative data home takes the default"
-  (check-equal? (data-directories "data" "/a" home)
-                (paths (list "/home/u/.local/share" "/a"))))
-
-(test-case "empty and relative data directories are ignored"
-  (check-equal? (data-directories "/data" "/a::b:/c" home)
-                (paths (list "/data" "/a" "/c"))))
 
 (test-case "a workflow name is lowercase letters, digits and hyphens"
   (check-true (workflow-name? "design-first-tdd2")))
@@ -65,54 +35,54 @@
                 (list #f #f #f)))
 
 (test-case "a fork of a reusable workflow takes its name"
-  (check-equal? (fork-name (reusable-workflow "spike" (string->path "/w/spike.md")))
+  (check-equal? (workflow-fork-name (reusable-workflow "spike" (string->path "/w/spike.md")))
                 "spike"))
 
 (test-case "a fork of a reference takes its file name without workflow- and .md"
-  (check-equal? (fork-name (scope-path 'arc (string->path "workflow-review.md")))
+  (check-equal? (workflow-fork-name (scope-path 'arc (string->path "workflow-review.md")))
                 "review"))
 
 (test-case "a fork of a reference without the workflow- prefix takes its file name without .md"
-  (check-equal? (fork-name (scope-path 'project (string->path "docs/review.md")))
+  (check-equal? (workflow-fork-name (scope-path 'project (string->path "docs/review.md")))
                 "review"))
 
 (test-case "a fork of a reference whose file name is not a workflow name takes it anyway"
-  (check-equal? (fork-name (scope-path 'handoff (string->path "Review_Notes.md")))
+  (check-equal? (workflow-fork-name (scope-path 'handoff (string->path "Review_Notes.md")))
                 "Review_Notes"))
 
 (test-case "a workflow's copy is named workflow-<name>.md"
   (check-equal? (workflow-copy-name "spike") "workflow-spike.md"))
 
 (test-case "a verbatim copy's provenance line names the workflow, its hash and the date"
-  (check-equal? (provenance-line 'copied "workflow spike" #"x" now)
+  (check-equal? (format-workflow-provenance-line 'copied "workflow spike" #"x" now)
                 (format "<!-- copied from workflow spike (sha256:~a) on 2026-10-31; verbatim -->\n"
                         x-hash)))
 
 (test-case "a fork's provenance line names its source and is not verbatim"
-  (check-equal? (provenance-line 'forked "handoff:workflow-spike.md" #"x" now)
+  (check-equal? (format-workflow-provenance-line 'forked "handoff:workflow-spike.md" #"x" now)
                 (format "<!-- forked from handoff:workflow-spike.md (sha256:~a) on 2026-10-31 -->\n"
                         x-hash)))
 
 (test-case "a provenance line's date is the UTC date"
   (check-regexp-match #rx" on 2026-11-01; verbatim -->\n$"
-                      (provenance-line 'copied
-                                       "workflow spike"
-                                       #"x"
-                                       (iso8601->moment "2026-10-31T22:00:00-05:00"))))
+                      (format-workflow-provenance-line 'copied
+                                                       "workflow spike"
+                                                       #"x"
+                                                       (iso8601->moment "2026-10-31T22:00:00-05:00"))))
 
 (test-case "a verbatim copy's provenance is split from its text, with the hash"
-  (check-equal? (split (string-append (provenance-line 'copied "workflow spike" #"x" now)
+  (check-equal? (split (string-append (format-workflow-provenance-line 'copied "workflow spike" #"x" now)
                                       "# Spike\n"))
-                (cons (provenance 'copied x-hash) "# Spike\n")))
+                (cons (workflow-provenance 'copied x-hash) "# Spike\n")))
 
 (test-case "a fork's provenance is split from its text, with the hash"
-  (check-equal? (split (string-append (provenance-line 'forked "workflow spike" #"x" now)
+  (check-equal? (split (string-append (format-workflow-provenance-line 'forked "workflow spike" #"x" now)
                                       "# Spike\n"))
-                (cons (provenance 'forked x-hash) "# Spike\n")))
+                (cons (workflow-provenance 'forked x-hash) "# Spike\n")))
 
 (test-case "a created workflow's provenance has no hash"
   (check-equal? (split "<!-- created for this arc on 2026-10-31 -->\n# W\n")
-                (cons (provenance 'created #f) "# W\n")))
+                (cons (workflow-provenance 'created #f) "# W\n")))
 
 (test-case "a text without a provenance line is left whole"
   (check-equal? (split "# W\n") (cons #f "# W\n")))
@@ -122,23 +92,23 @@
                 (cons #f "# W\n<!-- created for this arc on 2026-10-31 -->\n")))
 
 (test-case "a copy is unchanged when its hash is the reusable workflow's"
-  (check-equal? (install-status (provenance-line 'copied "workflow spike" #"x" now) #"x")
+  (check-equal? (workflow-install-status (format-workflow-provenance-line 'copied "workflow spike" #"x" now) #"x")
                 'unchanged))
 
 (test-case "a copy is changed when its hash is not the reusable workflow's"
-  (check-equal? (install-status (provenance-line 'copied "workflow spike" #"x" now) #"y")
+  (check-equal? (workflow-install-status (format-workflow-provenance-line 'copied "workflow spike" #"x" now) #"y")
                 'changed))
 
 (test-case "a fork is not a verbatim copy"
-  (check-equal? (install-status (provenance-line 'forked "workflow spike" #"x" now) #"x")
+  (check-equal? (workflow-install-status (format-workflow-provenance-line 'forked "workflow spike" #"x" now) #"x")
                 'not-verbatim))
 
 (test-case "a created workflow is not a verbatim copy"
-  (check-equal? (install-status "<!-- created for this arc on 2026-10-31 -->\n" #"x")
+  (check-equal? (workflow-install-status "<!-- created for this arc on 2026-10-31 -->\n" #"x")
                 'not-verbatim))
 
 (test-case "a file without a provenance line is not a verbatim copy"
-  (check-equal? (install-status "x" #"x") 'not-verbatim))
+  (check-equal? (workflow-install-status "x" #"x") 'not-verbatim))
 
 (test-case "a new arc's files are its state files, in order"
   (check-equal? (map (inst car String String) (new-arc-files "a" placeholder-workflow))

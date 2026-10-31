@@ -1,7 +1,8 @@
-# This is a manual closure of the toml-lib dependencies. We add `tzdata` so the
-# `gregor` library can use it. The patch fixes toml-lib's floats, which lose
-# leading zeros in their fractional part (0.05 reads as 0.5) and the sign of a
-# negative float whose integer part is zero (-0.5 reads as 0.5).
+# This is a manual closure of the toml-lib and basedir dependencies. We add
+# `tzdata` so the `gregor` library can use it. The patch fixes toml-lib's
+# floats, which lose leading zeros in their fractional part (0.05 reads as 0.5)
+# and the sign of a negative float whose integer part is zero (-0.5 reads as
+# 0.5).
 {
   lib,
   stdenvNoCC,
@@ -29,6 +30,8 @@ let
 
   # Package name and the directory holding its info.rkt.
   packages = {
+    basedir = github "willghatch" "racket-basedir" "487dfc49ff3268b76dea9aa2011ddfe585da2672"
+      "sha256-Ia+wFnUSKMfhot0f8I8TFCPtGEdwy9gnnrnBEgNvSt0=";
     toml-lib = "${toml-racket}/toml-lib";
     gregor-lib = "${gregor}/gregor-lib";
     memoize-lib = "${memoize}/memoize-lib";

@@ -65,7 +65,7 @@ path = "project:src/parse.rs"
 reason = "the recovery hooks go in `Parser::next_token`"
 ```
 
-The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read-first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*). In a new arc, as written by `handoff new`, `next` holds a placeholder that the linter rejects, and so does `workflow` when no workflow was given.
+The `next` field describes a single concrete action, written so that an agent with no context can begin it. The `workflow` field specifies the workflow you should follow (see *Workflows*). The `read-first` entries list the files that action needs, and only those, each with a reason. The insight is that the agent recording a handoff is best placed to know what the next session will need, since it has the whole current session in its context. Therefore, agents rewrite every field of this file at every handoff (see *Updates*).
 
 ### `arc.md`
 
@@ -234,7 +234,7 @@ Each copy opens with a provenance line saying where it came from:
 | `<!-- forked from <source> (sha256:…) on <date> -->` | `handoff workflow fork` | in the arc |
 | `<!-- created for this arc on <date> -->` | you | in the arc |
 
-The hash is of the source at the time it was copied, and the script writes the date in UTC. Hashing the copy shows whether a verbatim copy has been amended, and hashing the source shows whether the source has moved on since.
+The hash is of the source at the time it was copied. Hashing the copy shows whether a verbatim copy has been amended, and hashing the source shows whether the source has moved on since.
 
 - Never amend a verbatim copy, since other arcs may run against it. Fork it with `handoff workflow fork <arc> <source> [<name>]` and amend the fork.
 - Amend forked and created workflows in place. Date the change in the file and record it in the update's log entry.
