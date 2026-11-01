@@ -123,8 +123,8 @@
                       (eprintf "~a\n" (exn-message error))
                       'usage)])
      (match (parse-arguments argv)
-       ;; Most commands execute from with the current working directory set to
-       ;; the project repository, but there are few for which this doesn't make
+       ;; Most commands execute with the current working directory set to the
+       ;; project repository, but there are a few for which this doesn't make
        ;; sense.
        [(invocation _ (workflow-list-subcommand)) (handle-workflow-list)]
        [(invocation _ (guide-subcommand)) (handle-guide)]
