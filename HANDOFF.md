@@ -136,11 +136,7 @@ Check commands should be read-only; they should never modify state.
 
 It is okay for checks to return false, and this does not necessarily indicate a failure of the previous handoff. For example, we might want to check that "the old API has not yet been deleted" or "the migration has not run on the replica", and these checks might expectedly fail for many handoffs. Interpreting the meaning of check outcomes is something that requires agent judgment.
 
-The `handoff check` subcommand runs the checks and prints the results. The `handoff update --begin` subcommand runs the checks and records the results in the new pending log entry (see *Updates*).
-
-TODO: Make this shorter, and probably incorporate or replace existing prose. Do this after all the script changes are made and we make a systematic pass over all of HANDOFF.md
-
-The `handoff start` and `handoff check --compare` subcommands compare the results against those of the last handoff. A check that was added or removed since then is labeled `new` or `removed`, and a check whose `command` or `timeout` changed is labeled `redefined`, since its outcomes are no longer comparable; changing only the `claim` does not redefine a check. A change in the outcome of any other check is labeled by what the two outcomes say about the claim. True and false decide the claim, and unknown and timeout leave it undecided. The change is `contradicted` when the outcome moves between true and false, `unverified` when it moves from decided to undecided, `verified` when it moves from undecided to decided, and `still-unverified` when it moves between unknown and timeout.
+The `handoff check` subcommand runs the checks and prints the results. The `handoff update --begin` subcommand runs the checks and records the results in the new pending log entry (see *Updates*). The `handoff start` and `handoff check --compare` subcommands compare the results with those of the last handoff. They label a check `new`, `removed`, or `redefined` (its `command` or `timeout` changed), and any other change by its effect on the claim, including `contradicted`, `verified`, `unverified`, or `still-unverified`.
 
 A new arc's `checks.toml`, as written by `handoff new`, holds a placeholder check that the linter rejects, so an arc needs at least one real check before its first update.
 
@@ -158,7 +154,7 @@ A log entry is **pending** if it is the highest-numbered `log/<N>/` and is not i
 
 Make sure to commit your project work and settle the contents of `checks.toml` before running `handoff update --begin`. If `checks.toml` or the project's branch or head have changed since running `handoff update --begin`, the `handoff update --commit` command refuses, making no modifications.
 
-The content of `entry.md` is then read by the agent in the next session as a description of what happened in the last session. The script also runs the checks and compares the outputs to those in `results.toml` from the last committed log entry.
+The content of `entry.md` is then read by the agent in the next session as a description of what happened in the last session.
 
 ## Decisions and provenance
 

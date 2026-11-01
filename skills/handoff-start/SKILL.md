@@ -54,7 +54,7 @@ Check for discrepancies in the handoff repository, including lint errors, uncomm
 
 A pending log entry means an update was begun and never committed, so the last handoff is the one before it. Report the entry's host and time and whether it has an `entry.md`, and ask the user whether to finish it (rerun `handoff update --begin`, review the entry, then `handoff update --commit`) or discard it. Do not do either without the user's explicit confirmation.
 
-Also check for review items whose work appears to have completed, rewritten, or removed. Raise each of these as a question to the user, and don't remove them without explicit user confirmation.
+Also check for review items whose work appears to have been completed, rewritten, or removed. Raise each of these as a question to the user, and don't remove them without explicit user confirmation.
 
 ## Step 5: Brief
 
@@ -76,7 +76,7 @@ With `go`, the session is unattended. Begin the `next` action under its workflow
 - An open question blocks `next`. Present the options and the evidence recorded in the arc's files, but do not settle it yourself.
 - The `next` action depends on an unconfirmed proposal.
 - A discrepancy needs the user's call, including lint errors and missing references.
-- A pending entry exists.
+- A pending log entry exists.
 - `next` would need a different workflow, or a change to the current one. An unattended session leaves the workflow as it is (see *Decisions and provenance* in HANDOFF.md).
 
 With `go`, record a handoff with the handoff-update skill once you have finished your work.

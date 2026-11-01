@@ -51,7 +51,7 @@ A workflow settles how the user wants to work with you on this arc (see *Workflo
 
 Start from what exists. `handoff workflow list` shows the workflows the user keeps for reuse, and other arcs may run against workflows of their own. Open the ones that could fit, and propose the closest. Propose a variation or a new workflow only when you can name something about this arc that the existing workflows handle badly. For example, an interface that has to be settled before anything else, a check too slow to run every session, or a component only the user can exercise. If you cannot name one, use the closest existing workflow. The arc can switch later, once a mismatch shows.
 
-The workflow only needs to fit the arc's first phase. When it fits only that phase, say so in the route in `arc.md`.
+The workflow only needs to fit the arc's first phase. When it fits only that phase, say so as *Writing a workflow* in HANDOFF.md describes.
 
 ## Step 5: Write
 

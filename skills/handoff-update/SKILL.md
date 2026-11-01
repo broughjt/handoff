@@ -28,7 +28,7 @@ Run `handoff update --begin [arc]`. If the linter refuses, fix the files it comp
 
 ## Step 4: Write `entry.md`
 
-Write `entry.md` at the path `handoff update --begin` printed. Open it with a heading that says what changed, not "worked on X". This heading will become the commit subject later.
+Write `entry.md` at the path `handoff update --begin` printed. Open it with a heading that says what changed, not "worked on X". This heading will become the commit subject later, prefixed with `<arc>: `.
 
 Include:
 
