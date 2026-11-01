@@ -9,10 +9,6 @@
 
 let
   cfg = config.programs.handoff;
-
-  skills = lib.genAttrs (builtins.attrNames (builtins.readDir ../skills)) (
-    name: "${cfg.package}/share/skills/handoff/${name}"
-  );
 in
 {
   options.programs.handoff = {
@@ -23,6 +19,16 @@ in
       default = self.packages.${pkgs.stdenv.hostPlatform.system}.handoff;
       defaultText = lib.literalExpression "handoff.packages.\${pkgs.stdenv.hostPlatform.system}.handoff";
       description = "The handoff package, which provides the `handoff` command and the skills.";
+    };
+
+    skills = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      readOnly = true;
+      default = lib.genAttrs (builtins.attrNames (builtins.readDir ../skills)) (
+        name: "${cfg.package}/share/skills/handoff/${name}"
+      );
+      defaultText = lib.literalMD "each skill's directory in {option}`programs.handoff.package`, by name";
+      description = "The skills, for linking them into an agent the module does not integrate with.";
     };
 
     enableClaudeCodeIntegration = lib.mkOption {
@@ -43,8 +49,8 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    programs.claude-code.skills = lib.mkIf cfg.enableClaudeCodeIntegration skills;
+    programs.claude-code.skills = lib.mkIf cfg.enableClaudeCodeIntegration cfg.skills;
 
-    programs.codex.skills = lib.mkIf cfg.enableCodexIntegration skills;
+    programs.codex.skills = lib.mkIf cfg.enableCodexIntegration cfg.skills;
   };
 }
