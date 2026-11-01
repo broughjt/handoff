@@ -53,27 +53,20 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     runHook postCheck
   '';
 
-  # The script calls git commands and runs user checks under bash. It finds
-  # reusable workflows in $XDG_DATA_HOME/handoff/workflows/ and then each
-  # $XDG_DATA_DIRS/handoff/workflows/, and HANDOFF.md, the concepts the skills
-  # share, at the first handoff/HANDOFF.md in the same directories, so the
-  # wrapper puts the package's own share directory first among
-  # $XDG_DATA_DIRS. installAgentSkills has already created $out in preInstall,
+  # The script calls git commands and runs user checks under bash. raco
+  # distribute has already copied HANDOFF.md and the workflows into dist, as
+  # runtime paths. installAgentSkills has already created $out in preInstall,
   # so dist is copied into it rather than to it.
   installPhase = ''
     runHook preInstall
     cp -r dist/. $out
-    mkdir -p $out/share/handoff
-    cp -r workflows $out/share/handoff/workflows
-    cp HANDOFF.md $out/share/handoff/HANDOFF.md
     wrapProgram $out/bin/handoff \
       --prefix PATH : ${
         lib.makeBinPath [
           bash
           git
         ]
-      } \
-      --prefix XDG_DATA_DIRS : $out/share
+      }
     runHook postInstall
   '';
 
@@ -103,7 +96,7 @@ stdenvNoCC.mkDerivation (finalAttrs: {
     printf '[[check]]\nid = "x"\nclaim = "holds"\ncommand = "true"\n' > $repository/arc/checks.toml
     $out/bin/handoff --repository $repository check
     $out/bin/handoff workflow list | grep -qx 'name: agent-implements'
-    test "$($out/bin/handoff guide)" = $out/share/handoff/HANDOFF.md
+    cmp "$($out/bin/handoff guide)" HANDOFF.md
     test -f $out/share/skills/handoff/handoff-start/SKILL.md
     runHook postInstallCheck
   '';

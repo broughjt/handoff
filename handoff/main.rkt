@@ -9,6 +9,7 @@
          racket/math
          racket/path
          racket/port
+         racket/runtime-path
          racket/string
          racket/system
          typed/file/sha1
@@ -30,8 +31,7 @@
 
 (require/typed basedir
   [list-data-dirs
-   (->* () (#:program Path-String #:only-existing? Any) (Listof Path))]
-  [list-data-files (->* (Path-String) (#:program Path-String) (Listof Path))])
+   (->* () (#:program Path-String #:only-existing? Any) (Listof Path))])
 
 (require/typed racket/os
   [gethostname (-> String)])
@@ -480,13 +480,7 @@
 
 (: handle-guide (-> Status))
 (define (handle-guide)
-  (match (list-data-files guide-file #:program program-name)
-    [(cons path _) (displayln path)]
-    ['()
-     (raise-handoff-error
-      "no ~a in ~a"
-      guide-file
-      (string-join (map path->string (handoff-data-directories)) ", "))])
+  (displayln (simplify-path guide-path))
   'success)
 
 ;;; Repositories
@@ -1874,20 +1868,20 @@
 
 ;;; Reusable workflows
 
-(define guide-file "HANDOFF.md")
+(define-runtime-path guide-path "../HANDOFF.md")
+(define-runtime-path bundled-workflow-directory "../workflows")
 
 (struct reusable-workflow ([name : String] [path : Path]) #:transparent)
 
 (define program-name "handoff")
 
-(: handoff-data-directories (-> (Listof Path)))
-(define (handoff-data-directories)
-  (list-data-dirs #:program program-name #:only-existing? #f))
-
 (: workflow-directories (-> (Listof Path)))
 (define (workflow-directories)
-  (for/list ([directory (in-list (handoff-data-directories))])
-    (build-path directory "workflows")))
+  (define data-directories
+    (list-data-dirs #:program program-name #:only-existing? #f))
+  (append (for/list : (Listof Path) ([directory (in-list data-directories)])
+            (build-path directory "workflows"))
+          (list (simplify-path bundled-workflow-directory))))
 
 (: read-reusable-workflows (-> (Listof Path) (Listof reusable-workflow)))
 (define (read-reusable-workflows directories)
