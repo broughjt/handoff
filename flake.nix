@@ -40,7 +40,15 @@
       }
     )
     // {
-      # Also available as the package's passthru.skills.
+      overlays.default = final: _prev: {
+        handoff = final.callPackage ./nix/package.nix {
+          racketDependencies = final.callPackage ./nix/racket-dependencies.nix { };
+        };
+      };
+
+      homeModules.default = import ./nix/home-manager.nix { inherit self; };
+
+      # Superseded by the package's passthru.skills and the home-manager module.
       skills = ./skills;
     };
 }
