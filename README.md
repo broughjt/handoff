@@ -54,39 +54,20 @@ The `-g` means to install to a global user directory instead of installing local
 
 If you don't use Node, just manually copy the `handoff-start/`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agent/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
 
-Next, install Racket 9.3 or later if you don't have it. To build the `handoff` command from source, first install `toml-lib`, `gregor`, `tzdata`, and `basedir` as dependencies, and `typed-racket-lib` too if you installed Minimal Racket.
+Next, install Racket 9.3 or later if you don't have it, and install `handoff` as a Racket package:
 
 ```sh
-git clone https://github.com/broughjt/handoff
-cd handoff
-raco pkg install --batch --auto --no-docs \
-  toml-lib gregor-lib tzdata basedir
+raco pkg install --auto git+https://github.com/broughjt/handoff
 ```
 
-Currently, `toml-lib` has a bug that causes it to misread floats such as `0.05`, so we patch it:
-
-(TODO: Say I've submitted a PR once we have.)
+This installs its dependencies and a `handoff` launcher in Racket's user `bin` directory, which is not on `PATH` by default. This prints the directory to add to `PATH`, such as `~/.local/share/racket/9.3/bin`:
 
 ```sh
-patch -p1 -d "$(racket -l racket/base -l pkg/lib \
-  -e '(display (pkg-directory "toml-lib"))')" < nix/toml-lib-floats.patch
-raco setup --pkgs toml-lib
+racket -l racket/base -l setup/dirs -e '(displayln (find-user-console-bin-dir))'
 ```
 
-Then build the executable:
+Currently, `toml-lib` has a bug that causes it to misread floats such as `0.05`, so the package depends on a fork with the fix until the [upstream PR](https://github.com/toml-racket/toml-racket/pull/24) is merged. If you already had `toml-lib` installed, `raco` keeps that copy, and so you need to switch it to the fork:
 
 ```sh
-raco make handoff/main.rkt
-mkdir build
-raco exe -o build/handoff handoff/main.rkt
-raco distribute dist build/handoff
+raco pkg update 'git+https://github.com/broughjt/toml-racket?path=toml-lib#fix-floats'
 ```
-
-Copy the `dist` directory somewhere permanent. Something like:
-
-```sh
-mkdir -p ~/.local/opt
-cp -r dist ~/.local/opt/handoff
-```
-
-Then add `~/.local/opt/handoff/bin` to `PATH`.
