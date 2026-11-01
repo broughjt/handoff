@@ -3,13 +3,14 @@
   stdenvNoCC,
   makeWrapper,
   removeReferencesTo,
+  installAgentSkills,
   racket,
   racketDependencies,
   bash,
   git,
 }:
 
-stdenvNoCC.mkDerivation {
+stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "handoff";
   version = "0.1.0";
 
@@ -19,6 +20,7 @@ stdenvNoCC.mkDerivation {
       ../handoff
       ../workflows
       ../HANDOFF.md
+      ../skills
     ];
   };
 
@@ -26,6 +28,7 @@ stdenvNoCC.mkDerivation {
     racket
     makeWrapper
     removeReferencesTo
+    installAgentSkills
   ];
   nativeCheckInputs = [
     bash
@@ -55,10 +58,11 @@ stdenvNoCC.mkDerivation {
   # $XDG_DATA_DIRS/handoff/workflows/, and HANDOFF.md, the concepts the skills
   # share, at the first handoff/HANDOFF.md in the same directories, so the
   # wrapper puts the package's own share directory first among
-  # $XDG_DATA_DIRS.
+  # $XDG_DATA_DIRS. installAgentSkills has already created $out in preInstall,
+  # so dist is copied into it rather than to it.
   installPhase = ''
     runHook preInstall
-    cp -r dist $out
+    cp -r dist/. $out
     mkdir -p $out/share/handoff
     cp -r workflows $out/share/handoff/workflows
     cp HANDOFF.md $out/share/handoff/HANDOFF.md
@@ -100,10 +104,11 @@ stdenvNoCC.mkDerivation {
     $out/bin/handoff --repository $repository check
     $out/bin/handoff workflow list | grep -qx 'name: agent-implements'
     test "$($out/bin/handoff guide)" = $out/share/handoff/HANDOFF.md
+    test -f $out/share/skills/handoff/handoff-start/SKILL.md
     runHook postInstallCheck
   '';
 
-  passthru.skills = ../skills;
+  passthru.skills = "${finalAttrs.finalPackage}/share/skills/handoff";
 
   meta.mainProgram = "handoff";
-}
+})
