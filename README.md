@@ -39,10 +39,9 @@ Without home-manager, there is an overlay, `overlays.default`, that provides `pk
 
 ### Without Nix
 
-There are three components in the installation:
+There are two components in the installation:
 
 - The `handoff` command
-- The `HANDOFF.md` file, which needs to go in an XDG data directory (e.g. `~/.local/share/handoff` or `/usr/local/share/handoff`)
 - The three skills, `handoff-create`, `handoff-start`, and `handoff-update`, which need to your agent harness skills directory
 
 For the skills, if you've got Node, there is a `skills` CLI from Vercel you can use:
@@ -91,10 +90,3 @@ cp -r dist ~/.local/opt/handoff
 ```
 
 Then add `~/.local/opt/handoff/bin` to `PATH`.
-
-Also copy the data files from this repository:
-
-```sh
-mkdir -p ~/.local/share/handoff
-cp -r HANDOFF.md workflows ~/.local/share/handoff/
-```
