@@ -55,13 +55,13 @@ The `-g` means to install to a global user directory instead of installing local
 
 If you don't use Node, just manually copy the `handoff-start/`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agent/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
 
-Next, install Racket 9.3 or later if you don't have it. To build the `handoff` command from source, first install `toml-lib`, `gregor`, `tzdata`, `basedir`, and `typed-racket-lib` as dependencies. 
+Next, install Racket 9.3 or later if you don't have it. To build the `handoff` command from source, first install `toml-lib`, `gregor`, `tzdata`, and `basedir` as dependencies, and `typed-racket-lib` too if you installed Minimal Racket.
 
 ```sh
 git clone https://github.com/broughjt/handoff
 cd handoff
 raco pkg install --batch --auto --no-docs \
-  toml-lib gregor-lib tzdata basedir typed-racket-lib
+  toml-lib gregor-lib tzdata basedir
 ```
 
 Currently, `toml-lib` has a bug that causes it to misread floats such as `0.05`, so we patch it:
