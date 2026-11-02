@@ -64,7 +64,7 @@
          parse-check-run
          write-check-run
          compare-check-results
-         check-matched-change
+         check-redefined?
          print-results
          print-comparisons
          (struct-out arc)
@@ -864,14 +864,6 @@
   #:transparent)
 (define-type Check-Comparison (U check-added check-removed check-matched))
 
-(define-type Change
-  (U 'redefined
-     'unchanged
-     'contradicted
-     'unverified
-     'verified
-     'still-unverified))
-
 (: compare-check-results (-> (Listof check-result)
                              (Listof check-result)
                              (Listof Check-Comparison)))
@@ -892,33 +884,14 @@
                                           #:unless (find result after))
      (check-removed result))))
 
-(: check-matched-change (-> check-matched Change))
-(define (check-matched-change comparison)
-  (match-define (check-matched before after) comparison)
-  (cond
-    [(not (check-definition-equivalent? (check-result-check before)
-                                        (check-result-check after)))
-     'redefined]
-    [else (outcome-change (check-result-outcome before)
-                          (check-result-outcome after))]))
-
 ;; The claim is a description of the command, so rewording it does not
 ;; redefine the check.
-(: check-definition-equivalent? (-> check check Boolean))
-(define (check-definition-equivalent? a b)
-  (and (equal? (check-command a) (check-command b))
-       (= (check-timeout a) (check-timeout b))))
-
-(: outcome-change (-> Outcome Outcome Change))
-(define (outcome-change before after)
-  (define (definite? [outcome : Outcome])
-    (and (memq outcome (list 'true 'false)) #t))
-  (cond
-    [(eq? before after) 'unchanged]
-    [(and (definite? before) (definite? after)) 'contradicted]
-    [(definite? before) 'unverified]
-    [(definite? after) 'verified]
-    [else 'still-unverified]))
+(: check-redefined? (-> check-matched Boolean))
+(define (check-redefined? comparison)
+  (match-define (check-matched (check-result before _) (check-result after _))
+    comparison)
+  (not (and (equal? (check-command before) (check-command after))
+            (= (check-timeout before) (check-timeout after)))))
 
 ;;; Printing results
 
@@ -943,29 +916,23 @@
   (for ([comparison (in-list comparisons)])
     (match comparison
       [(check-added after)
-       (print-result-header after)
-       (printf "change: new since log/~a\n" log-entry-number)
+       (print-result-header after (format "new since log/~a" log-entry-number))
        (print-result-details after)
        (newline)]
       [(check-matched before after)
-       (define change (check-matched-change comparison))
-       (define show-earlier-output?
-         (and (not (memq change (list 'unchanged 'redefined)))
-              (not (eq? (check-result-outcome before) 'true))))
-       (print-result-header after)
-       (case change
-         [(unchanged) (void)]
-         [(redefined)
-          (printf "change: redefined since log/~a, where it was ~a\n"
-                  log-entry-number
-                  (check-result-outcome before))]
-         [else
-          (printf "change: ~a, was ~a at log/~a\n"
-                  change
-                  (check-result-outcome before)
-                  log-entry-number)])
+       (define earlier (check-result-outcome before))
+       (define changed? (not (eq? earlier (check-result-outcome after))))
+       (print-result-header
+        after
+        (cond
+          [(check-redefined? comparison)
+           (format "was ~a at log/~a under a different command or timeout"
+                   earlier
+                   log-entry-number)]
+          [changed? (format "was ~a at log/~a" earlier log-entry-number)]
+          [else #f]))
        (print-result-details after)
-       (when show-earlier-output?
+       (when (and changed? (not (eq? earlier 'true)))
          (print-output (format "output at log/~a" log-entry-number)
                        (check-observation-output
                         (check-result-observation before))))
@@ -990,12 +957,14 @@
                    [(check-removed _) #f]))
                comparisons)))
 
-(: print-result-header (-> check-result Void))
-(define (print-result-header result)
+(: print-result-header (->* (check-result) ((U String #f)) Void))
+(define (print-result-header result [note #f])
   (define check (check-result-check result))
   (printf "id: ~a\n" (check-id check))
   (printf "claim: ~a\n" (check-claim check))
-  (printf "outcome: ~a\n" (check-result-outcome result)))
+  (printf "outcome: ~a~a\n"
+          (check-result-outcome result)
+          (if note (string-append ", " note) "")))
 
 (: print-result-details (-> check-result Void))
 (define (print-result-details result)

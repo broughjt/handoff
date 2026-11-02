@@ -32,26 +32,12 @@
 
 (test-case "rewording a claim does not redefine a check, but changing its timeout does"
   (define before (check "a" "claim" "true" 60))
-  (define (change [after : check])
-    (check-matched-change
+  (define (redefined? [after : check])
+    (check-redefined?
      (check-matched (check-result before (check-observation 0 0 "" 0))
                     (check-result after (check-observation 0 0 "" 0)))))
-  (check-equal? (change (check "a" "reworded" "true" 60)) 'unchanged)
-  (check-equal? (change (check "a" "claim" "true" 120)) 'redefined))
-
-(test-case "a change of outcome is classified by what each outcome says about the claim"
-  (define exits (list 0 1 3 #f))
-  (check-equal? (for*/list : (Listof Symbol) ([before (in-list exits)]
-                                              [after (in-list exits)])
-                  (check-matched-change
-                   (check-matched (result "a" "true" before)
-                                  (result "a" "true" after))))
-                ;; before: true, false, unknown, timeout; after in the same
-                ;; order
-                (list 'unchanged 'contradicted 'unverified 'unverified
-                      'contradicted 'unchanged 'unverified 'unverified
-                      'verified 'verified 'unchanged 'still-unverified
-                      'verified 'verified 'still-unverified 'unchanged)))
+  (check-false (redefined? (check "a" "reworded" "true" 60)))
+  (check-true (redefined? (check "a" "claim" "true" 120))))
 
 (test-case "a comparison shows changes, the baseline's output and removed checks"
   (define baseline
@@ -75,16 +61,14 @@
                                "\n"
                                "id: flips\n"
                                "claim: it holds\n"
-                               "outcome: true\n"
-                               "change: contradicted, was false at log/7\n"
+                               "outcome: true, was false at log/7\n"
                                "duration: 1.2s\n"
                                "output at log/7:\n"
                                "  missing\n"
                                "\n"
                                "id: fresh\n"
                                "claim: it is new\n"
-                               "outcome: false\n"
-                               "change: new since log/7\n"
+                               "outcome: false, new since log/7\n"
                                "exit: 1\n"
                                "duration: 0s\n"
                                "output:\n"
