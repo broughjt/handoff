@@ -2,7 +2,7 @@
 
 ## Installation
 
-If you use Nix, installing is really easy. If you don't use Nix, why aren't you using Nix? It's like [XKCD 353](https://xkcd.com/353/) for package managers. Especially now that you mostly don't have to write any Nix by hand anymore, I don't know why you would use any other package manager. But anyway, if you don't use Nix, there is a binary release for x86_64 Linux, and otherwise you'll have to install from source.
+If you use Nix, installing is really easy. If you don't use Nix, why aren't you using Nix? It's like [XKCD 353](https://xkcd.com/353/) for package managers. Especially now that you mostly don't have to write any Nix by hand anymore, I don't know why you would use any other package manager. But anyway, if you don't use Nix, you can either install using the Racket package manager `raco` or from the binary release on GitHub.
 
 ### With Nix
 
@@ -48,23 +48,15 @@ The `-g` means to install to a global user directory instead of installing local
 
 If you don't use Node, just manually copy the `handoff-start`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agents/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
 
-Next, for the `handoff` command on x86_64 Linux, download the tarball from the [latest release](https://github.com/broughjt/handoff/releases/latest), unpack it somewhere permanent, and link the command onto your `PATH`:
+For the `handoff` command installation, you have two options. You can either install as a Racket package or install from a binary release if you're on Linux.
 
-```sh
-mkdir -p ~/.local/opt ~/.local/bin
-tar -xzf handoff-v*-x86_64-linux.tar.gz -C ~/.local/opt
-ln -s ~/.local/opt/handoff-v*-x86_64-linux/bin/handoff ~/.local/bin/handoff
-```
-
-The tarball also holds the skills, in `share/skills/handoff`. `handoff` needs `git` and `bash` on your `PATH`.
-
-On other platforms, install Racket 9.3 or later if you don't have it, and install `handoff` as a Racket package:
+For the first option, install Racket 9.3 or later if you don't have it, and install `handoff` using `raco`:
 
 ```sh
 raco pkg install --auto git+https://github.com/broughjt/handoff
 ```
 
-This installs its dependencies and a `handoff` launcher in Racket's user `bin` directory, which is not on `PATH` by default. This prints the directory to add to `PATH`, such as `~/.local/share/racket/9.3/bin`:
+This installs its dependencies and a `handoff` launcher in Racket's user `bin` directory, which is not on `PATH` by default. The following command prints the directory you need to add to `PATH` (e.g. `~/.local/share/racket/9.3/bin`):
 
 ```sh
 racket -l racket/base -l setup/dirs -e '(displayln (find-user-console-bin-dir))'
@@ -75,3 +67,13 @@ Currently, `toml-lib` has a bug that causes it to misread floats such as `0.05`,
 ```sh
 raco pkg update 'git+https://github.com/broughjt/toml-racket?path=toml-lib#fix-floats'
 ```
+
+For the second option, download the tarball from the [latest release](https://github.com/broughjt/handoff/releases/latest), unpack it somewhere permanent, and link the command onto your `PATH`:
+
+```sh
+mkdir -p ~/.local/opt ~/.local/bin
+tar -xzf handoff-v*-x86_64-linux.tar.gz -C ~/.local/opt
+ln -s ~/.local/opt/handoff-v*-x86_64-linux/bin/handoff ~/.local/bin/handoff
+```
+
+The tarball also contains the skills in `share/skills/handoff`. The `handoff` command requires `git` and `bash` to be on your `PATH`.
