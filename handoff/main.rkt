@@ -884,6 +884,17 @@
                                           #:unless (find result after))
      (check-removed result))))
 
+(: check-changed? (-> Check-Comparison Boolean))
+(define (check-changed? comparison)
+  (or (not (check-matched? comparison))
+      (check-redefined? comparison)
+      (outcome-changed? comparison)))
+
+(: outcome-changed? (-> check-matched Boolean))
+(define (outcome-changed? comparison)
+  (match-define (check-matched before after) comparison)
+  (not (eq? (check-result-outcome before) (check-result-outcome after))))
+
 ;; The claim is a description of the command, so rewording it does not
 ;; redefine the check.
 (: check-redefined? (-> check-matched Boolean))
@@ -921,7 +932,7 @@
        (newline)]
       [(check-matched before after)
        (define earlier (check-result-outcome before))
-       (define changed? (not (eq? earlier (check-result-outcome after))))
+       (define changed? (outcome-changed? comparison))
        (print-result-header
         after
         (cond
@@ -955,7 +966,17 @@
                    [(check-added after) after]
                    [(check-matched _ after) after]
                    [(check-removed _) #f]))
-               comparisons)))
+               comparisons)
+   (format "~a since log/~a"
+           (count-changes (count check-changed? comparisons))
+           log-entry-number)))
+
+(: count-changes (-> Natural String))
+(define (count-changes n)
+  (case n
+    [(0) "no changes"]
+    [(1) "1 change"]
+    [else (format "~a changes" n)]))
 
 (: print-result-header (->* (check-result) ((U String #f)) Void))
 (define (print-result-header result [note #f])
@@ -1000,8 +1021,8 @@
     (for ([line (in-list tail)])
       (printf "  ~a\n" line))))
 
-(: print-summary (-> (Listof check-result) Void))
-(define (print-summary check-results)
+(: print-summary (->* ((Listof check-result)) ((U String #f)) Void))
+(define (print-summary check-results [changes #f])
   (define (count-with-outcome outcome)
     (count (λ ([result : check-result])
              (eq? (check-result-outcome result) outcome))
@@ -1012,10 +1033,11 @@
                 [count (in-value (count-with-outcome outcome))]
                 #:unless (zero? count))
       (format "~a ~a" count outcome)))
-  (printf "summary: ~a\n"
+  (printf "summary: ~a~a\n"
           (if (empty? counts)
               "no checks"
-              (string-join counts ", "))))
+              (string-join counts ", "))
+          (if changes (string-append "; " changes) "")))
 
 ;;; Reading arcs
 

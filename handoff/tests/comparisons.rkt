@@ -76,4 +76,4 @@
                                "\n"
                                "removed since log/7: gone (it is gone)\n"
                                "\n"
-                               "summary: 1 true, 1 false\n")))
+                               "summary: 1 true, 1 false; 3 changes since log/7\n")))
