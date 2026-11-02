@@ -12,7 +12,7 @@ The flake provides a home-manager module (this requires both home-manager 26.11 
 
 ```nix
 inputs.handoff.url = "github:broughjt/handoff";
-# You probably want this to, but it is optional:
+# You probably want this too, but it is optional:
 inputs.handoff.inputs.nixpkgs.follows = "nixpkgs";
 inputs.handoff.inputs.flake-utils.follows = "flake-utils";
 ```
@@ -40,7 +40,7 @@ Without home-manager, there is an overlay, `overlays.default`, that provides `pk
 There are two components in the installation:
 
 - The `handoff` command
-- The three skills, `handoff-create`, `handoff-start`, and `handoff-update`, which need to your agent harness skills directory
+- The three skills, `handoff-create`, `handoff-start`, and `handoff-update`, which need to go in your agent harness skills directory
 
 For the skills, if you've got Node, there is a `skills` CLI from Vercel you can use:
 
@@ -50,7 +50,7 @@ npx skills add broughjt/handoff -g -a claude-code -a codex
 
 The `-g` means to install to a global user directory instead of installing locally to the project, and the `-a` option specifies which agent harnesses to target. See <https://github.com/vercel-labs/skills/blob/main/docs/commands.md#skills-use>.
 
-If you don't use Node, just manually copy the `handoff-start/`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agent/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
+If you don't use Node, just manually copy the `handoff-start`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agents/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
 
 Next, install Racket 9.3 or later if you don't have it, and install `handoff` as a Racket package:
 
