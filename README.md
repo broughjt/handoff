@@ -72,8 +72,8 @@ For the second option, download the tarball from the [latest release](https://gi
 
 ```sh
 mkdir -p ~/.local/opt ~/.local/bin
-tar -xzf handoff-v*-x86_64-linux.tar.gz -C ~/.local/opt
-ln -s ~/.local/opt/handoff-v*-x86_64-linux/bin/handoff ~/.local/bin/handoff
+tar -xzf handoff-v*-$(uname -m)-linux.tar.gz -C ~/.local/opt
+ln -s ~/.local/opt/handoff-v*-$(uname -m)-linux/bin/handoff ~/.local/bin/handoff
 ```
 
 The tarball also contains the skills in `share/skills/handoff`. The `handoff` command requires `git` and `bash` to be on your `PATH`.
