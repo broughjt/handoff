@@ -1,8 +1,6 @@
 # This is a manual closure of the toml-lib and basedir dependencies. We add
-# `tzdata` so the `gregor` library can use it. The patch fixes toml-lib's
-# floats, which lose leading zeros in their fractional part (0.05 reads as 0.5)
-# and the sign of a negative float whose integer part is zero (-0.5 reads as
-# 0.5).
+# `tzdata` so the `gregor` library can use it. toml-lib comes from a fork that
+# fixes its floats until toml-racket/toml-racket#24 is merged.
 {
   lib,
   stdenvNoCC,
@@ -16,8 +14,8 @@ let
     fetchFromGitHub { inherit owner repo rev hash; };
 
   toml-racket =
-    github "toml-racket" "toml-racket" "c86fd8295470d1c6f51b19054812a6be47dac4c9"
-      "sha256-5Bu3Ct1Aindeg1Qjty1P9ZF6k/XO/ULhgLMJkoPTTxk=";
+    github "broughjt" "toml-racket" "817669e714d9dab69cbc9cc194b41af5c583f1b7"
+      "sha256-m1PMmwLP/VX0mtvTwctgvMxGlGlp0GPE19+dTOfeYJQ=";
   gregor =
     github "97jaz" "gregor" "f56215db229ef2e33670f55d08c0330d8f85de23"
       "sha256-4TIeinXk7ak7sbT2lwfWYdwIwFD9S7whBrR2KEajW30=";
@@ -67,8 +65,6 @@ stdenvNoCC.mkDerivation {
         cp -r ${source} packages/${name}
       '') packages
     )}
-    chmod -R u+w packages
-    patch -d packages/toml-lib -p1 < ${./toml-lib-floats.patch}
     raco pkg install --batch --no-docs --scope user --deps fail --copy packages/*
     runHook postBuild
   '';
