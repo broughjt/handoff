@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      NAME: handoff-${{ github.ref_name }}-x86_64-linux
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Bogdanp/setup-racket@v1.15
+        with:
+          architecture: x64
+          distribution: minimal
+          variant: CS
+          version: "9.3"
+      - name: Build
+        run: |
+          raco pkg install --batch --auto --no-docs --name handoff --link "$PWD"
+          mkdir build
+          raco exe -o build/handoff handoff/main.rkt
+          raco distribute "$NAME" build/handoff
+          mkdir -p "$NAME/share/skills/handoff"
+          cp -r skills/. "$NAME/share/skills/handoff"
+      - name: Test
+        run: |
+          raco test handoff/tests
+          "$NAME/bin/handoff" workflow list | grep -qx 'name: agent-implements'
+          cmp "$("$NAME/bin/handoff" guide)" HANDOFF.md
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf "$NAME.tar.gz" "$NAME"
+          gh release create "$GITHUB_REF_NAME" "$NAME.tar.gz" --generate-notes
