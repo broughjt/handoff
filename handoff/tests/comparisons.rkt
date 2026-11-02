@@ -32,12 +32,10 @@
 
 (test-case "rewording a claim does not redefine a check, but changing its timeout does"
   (define before (check "a" "claim" "true" 60))
-  (define (redefined? [after : check])
-    (check-redefined?
-     (check-matched (check-result before (check-observation 0 0 "" 0))
-                    (check-result after (check-observation 0 0 "" 0)))))
-  (check-false (redefined? (check "a" "reworded" "true" 60)))
-  (check-true (redefined? (check "a" "claim" "true" 120))))
+  (check-true (check-definition-equivalent? before
+                                            (check "a" "reworded" "true" 60)))
+  (check-false (check-definition-equivalent? before
+                                             (check "a" "claim" "true" 120))))
 
 (test-case "a comparison shows changes, the baseline's output and removed checks"
   (define baseline

@@ -64,7 +64,7 @@
          parse-check-run
          write-check-run
          compare-check-results
-         check-redefined?
+         check-definition-equivalent?
          print-results
          print-comparisons
          (struct-out arc)
@@ -131,7 +131,15 @@
        [(invocation option (new-subcommand arc workflow))
         (handle-new option arc workflow)]
        [(invocation option subcommand)
-        (define handoff-repository (open-handoff-repository option))
+        (when (and option (not (git-repository? option)))
+          (raise-handoff-error "~a is not a git repository" option))
+        (define handoff-repository
+          (simple-form-path
+           (or option
+               (find-handoff-repository (current-directory))
+               (raise-handoff-error "no ~a/ at or above ~a"
+                                    handoff-repository-path
+                                    (current-directory)))))
         (match subcommand
           [(list-subcommand closed?)
            (handle-list handoff-repository closed?)]
@@ -372,10 +380,14 @@
     (raise-handoff-error "specify a top-level arc directory name"))
   (define workflow (and workflow-name (find-reusable-workflow workflow-name)))
   (define handoff-repository
-    (if option
-        (open-handoff-repository option)
-        (or (find-handoff-repository (current-directory))
-            (create-handoff-repository (current-directory)))))
+    (cond
+      [option
+       (unless (git-repository? option)
+         (raise-handoff-error "~a is not a git repository" option))
+       (simple-form-path option)]
+      [else
+       (or (find-handoff-repository (current-directory))
+           (create-handoff-repository (current-directory)))]))
   (define directory (build-path handoff-repository arc-name))
   (when (file-or-directory-type directory)
     (raise-handoff-error "~a already exists in ~a" arc-name handoff-repository))
@@ -508,17 +520,6 @@
 (define (git-repository? path)
   (define dot-git (build-path path ".git"))
   (or (directory-exists? dot-git) (file-exists? dot-git)))
-
-(: open-handoff-repository (-> (U Path #f) Path))
-(define (open-handoff-repository option)
-  (when (and option (not (git-repository? option)))
-    (raise-handoff-error "~a is not a git repository" option))
-  (simple-form-path
-   (or option
-       (find-handoff-repository (current-directory))
-       (raise-handoff-error "no ~a/ at or above ~a"
-                            handoff-repository-path
-                            (current-directory)))))
 
 (: find-handoff-repository (-> Path-String (U Path #f)))
 (define (find-handoff-repository start)
@@ -915,25 +916,12 @@
                                           #:unless (find result after))
      (check-removed result))))
 
-(: check-changed? (-> Check-Comparison Boolean))
-(define (check-changed? comparison)
-  (or (not (check-matched? comparison))
-      (check-redefined? comparison)
-      (outcome-changed? comparison)))
-
-(: outcome-changed? (-> check-matched Boolean))
-(define (outcome-changed? comparison)
-  (match-define (check-matched before after) comparison)
-  (not (eq? (check-result-outcome before) (check-result-outcome after))))
-
 ;; The claim is a description of the command, so rewording it does not
 ;; redefine the check.
-(: check-redefined? (-> check-matched Boolean))
-(define (check-redefined? comparison)
-  (match-define (check-matched (check-result before _) (check-result after _))
-    comparison)
-  (not (and (equal? (check-command before) (check-command after))
-            (= (check-timeout before) (check-timeout after)))))
+(: check-definition-equivalent? (-> check check Boolean))
+(define (check-definition-equivalent? a b)
+  (and (equal? (check-command a) (check-command b))
+       (= (check-timeout a) (check-timeout b))))
 
 ;;; Printing results
 
@@ -963,18 +951,21 @@
        (newline)]
       [(check-matched before after)
        (define earlier (check-result-outcome before))
-       (define changed? (outcome-changed? comparison))
+       (define redefined?
+         (not (check-definition-equivalent? (check-result-check before)
+                                            (check-result-check after))))
+       (define changed? (not (eq? earlier (check-result-outcome after))))
        (print-result-header
         after
         (cond
-          [(check-redefined? comparison)
-           (format "was ~a at log/~a under a different command or timeout"
-                   earlier
-                   log-entry-number)]
+          [redefined?
+           (format "redefined since log/~a, where it was ~a"
+                   log-entry-number
+                   earlier)]
           [changed? (format "was ~a at log/~a" earlier log-entry-number)]
           [else #f]))
        (print-result-details after)
-       (when (and changed? (not (eq? earlier 'true)))
+       (when (and changed? (not redefined?) (not (eq? earlier 'true)))
          (print-output (format "output at log/~a" log-entry-number)
                        (check-observation-output
                         (check-result-observation before))))
@@ -999,7 +990,17 @@
                    [(check-removed _) #f]))
                comparisons)
    (format "~a since log/~a"
-           (count-changes (count check-changed? comparisons))
+           (count-changes
+            (count (λ ([comparison : Check-Comparison])
+                     (match comparison
+                       [(check-matched before after)
+                        (not (and (check-definition-equivalent?
+                                   (check-result-check before)
+                                   (check-result-check after))
+                                  (eq? (check-result-outcome before)
+                                       (check-result-outcome after))))]
+                       [_ #t]))
+                   comparisons))
            log-entry-number)))
 
 (: count-changes (-> Natural String))
