@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Refusing to close an arc, and the references to it from other arcs.
 
 (require racket/function
          (except-in typed/rackunit check)

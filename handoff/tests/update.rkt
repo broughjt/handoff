@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Refusing to commit an update.
 
 (require racket/function
          (except-in typed/rackunit check)

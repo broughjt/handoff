@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Parsing and linting arcs.
 
 (require racket/function
          racket/list

@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; The TOML helpers.
 
 (require racket/function
          typed/rackunit

@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Printing the start report.
 
 (require racket/function
          racket/list

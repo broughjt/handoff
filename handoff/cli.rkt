@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Parsing handoff's command line.
 
 (require racket/cmdline
          "error.rkt")

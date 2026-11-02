@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Comparing results with those of the last handoff.
 
 (require racket/function
          racket/port

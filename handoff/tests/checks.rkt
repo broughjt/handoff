@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Parsing checks.toml and printing results.
 
 (require racket/function
          racket/port

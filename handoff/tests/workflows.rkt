@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Reusable workflows.
 
 (require racket/function
          (except-in typed/rackunit check)

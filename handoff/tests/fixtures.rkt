@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; A clean arc, for tests to vary.
 
 (require "../main.rkt")
 

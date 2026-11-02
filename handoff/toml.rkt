@@ -1,5 +1,4 @@
 #lang typed/racket/base
-;; Reading and writing TOML.
 
 (require racket/format
          racket/function
