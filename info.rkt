@@ -1,7 +1,7 @@
 #lang info
 
 (define collection "handoff")
-(define version "0.1")
+(define version "0.4")
 
 (define deps
   '("base"

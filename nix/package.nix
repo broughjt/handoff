@@ -12,7 +12,7 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "handoff";
-  version = "0.1.0";
+  version = "0.4";
 
   src = lib.fileset.toSource {
     root = ../.;
