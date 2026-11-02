@@ -27,9 +27,7 @@ Then import the module and enable it:
 }
 ```
 
-This puts `handoff` on your `PATH` and adds each skill to `programs.claude-code.skills` and `programs.codex.skills` when those programs are enabled. You can override this with the `programs.handoff.enableClaudeCodeIntegration` and `programs.handoff.enableCodexIntegration` options. For any other agent harness, you can link the skills up yourself by using the `programs.handoff.skills` option, which maps each skill's name to its directory in the package.
-
-(TODO: Add support for the Pi coding agent?)
+This puts `handoff` on your `PATH`, adds each skill to `programs.claude-code.skills` and `programs.codex.skills` when those programs are enabled, and links each skill into the `skills` directory of `programs.pi-coding-agent.configDir` when Pi is enabled. You can override this with the `programs.handoff.enableClaudeCodeIntegration`, `programs.handoff.enableCodexIntegration` and `programs.handoff.enablePiIntegration` options. For any other agent harness, you can link the skills up yourself by using the `programs.handoff.skills` option, which maps each skill's name to its directory in the package.
 
 Without home-manager, there is an overlay, `overlays.default`, that provides `pkgs.handoff`, and the `pkgs.handoff.skills` passthru is a directory that holds the handoff skills.
 
