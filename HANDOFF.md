@@ -270,7 +270,7 @@ Commands shown with `[arc]` take the arc as an optional last argument, which may
 | `handoff update --begin [arc]` | run the checks, record their results in a pending log entry, and print the path of its `entry.md` |
 | `handoff update --commit [arc]` | validate and commit the pending log entry, the arc, and anything staged |
 | `handoff close <arc>` | tag the arc's last handoff `closed/<arc>`, then remove the arc's directory and commit |
-| `handoff new <arc> [<workflow>]` | create an arc's files (uncommitted) |
+| `handoff new <arc> [<workflow>]` | create an arc's files (uncommitted), and the handoff repository if there is none |
 | `handoff workflow list` | list the workflows kept for reuse across projects |
 | `handoff workflow install <name>` | make a verbatim copy of a workflow at the handoff repository root |
 | `handoff workflow fork <arc> <source> [<name>]` | fork a reusable workflow or a reference |
