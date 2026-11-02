@@ -44,6 +44,13 @@ in
       defaultText = lib.literalExpression "config.programs.codex.enable";
       description = "Whether to add the handoff skills to {option}`programs.codex.skills`.";
     };
+
+    enablePiIntegration = lib.mkOption {
+      type = lib.types.bool;
+      default = config.programs.pi-coding-agent.enable;
+      defaultText = lib.literalExpression "config.programs.pi-coding-agent.enable";
+      description = "Whether to link the handoff skills into the `skills` directory of {option}`programs.pi-coding-agent.configDir`.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -52,5 +59,12 @@ in
     programs.claude-code.skills = lib.mkIf cfg.enableClaudeCodeIntegration cfg.skills;
 
     programs.codex.skills = lib.mkIf cfg.enableCodexIntegration cfg.skills;
+
+    home.file = lib.mkIf cfg.enablePiIntegration (
+      lib.mapAttrs' (
+        name: source:
+        lib.nameValuePair "${config.programs.pi-coding-agent.configDir}/skills/${name}" { inherit source; }
+      ) cfg.skills
+    );
   };
 }
