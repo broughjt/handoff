@@ -1892,8 +1892,15 @@
 
 (: workflow-directories (-> (Listof Path)))
 (define (workflow-directories)
+  ;; The XDG spec treats an empty variable as unset, but basedir does not.
+  (define environment
+    (environment-variables-copy (current-environment-variables)))
+  (for ([name (in-list (list #"XDG_DATA_HOME" #"XDG_DATA_DIRS"))])
+    (when (equal? (environment-variables-ref environment name) #"")
+      (environment-variables-set! environment name #f)))
   (define data-directories
-    (list-data-dirs #:program program-name #:only-existing? #f))
+    (parameterize ([current-environment-variables environment])
+      (list-data-dirs #:program program-name #:only-existing? #f)))
   (append (for/list : (Listof Path) ([directory (in-list data-directories)])
             (build-path directory "workflows"))
           (list (simplify-path bundled-workflow-directory))))
