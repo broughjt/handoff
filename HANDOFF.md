@@ -136,7 +136,7 @@ Check commands should be read-only; they should never modify state.
 
 It is okay for checks to return false, and this does not necessarily indicate a failure of the previous handoff. For example, we might want to check that "the old API has not yet been deleted" or "the migration has not run on the replica", and these checks might expectedly fail for many handoffs. Interpreting the meaning of check outcomes is something that requires agent judgment.
 
-The `handoff check` subcommand runs the checks and prints the results. The `handoff update --begin` subcommand runs the checks and records the results in the new pending log entry (see *Updates*). The `handoff start` and `handoff check --compare` subcommands compare the results with those of the last handoff. They label a check `new`, `removed`, or `redefined` (its `command` or `timeout` changed), and any other change by its effect on the claim, including `contradicted`, `verified`, `unverified`, or `still-unverified`.
+The `handoff check` subcommand runs the checks and prints the results. The `handoff update --begin` subcommand runs the checks and records the results in the new pending log entry (see *Updates*). The `handoff start` and `handoff check --compare` subcommands compare the results with those of the last handoff. They mark a check new, removed, or redefined (its `command` or `timeout` changed), and show the earlier outcome of any check whose outcome changed.
 
 A new arc's `checks.toml`, as written by `handoff new`, holds a placeholder check that the linter rejects, so an arc needs at least one real check before its first update.
 
