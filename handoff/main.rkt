@@ -1004,7 +1004,8 @@
   (define outcome (check-result-outcome result))
   (case outcome
     [(true) (void)]
-    [(timeout) (printf "timeout: ~as\n" (format-seconds (check-timeout check)))]
+    [(timeout)
+     (printf "timeout: ~as\n" (~r (check-timeout check) #:precision 3))]
     [else (printf "exit: ~a\n" (check-observation-exit observation))])
   (printf "duration: ~as\n"
           (format-seconds (check-observation-duration observation)))

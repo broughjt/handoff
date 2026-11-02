@@ -153,7 +153,7 @@
                                "summary: 1 false\n")))
 
 (test-case "a timed-out result is printed with its timeout"
-  (check-regexp-match #rx"outcome: timeout\ntimeout: 60.0s\n"
+  (check-regexp-match #rx"outcome: timeout\ntimeout: 60s\n"
                       (with-output-to-string
                         (thunk (print-results
                                 (list (check-result
