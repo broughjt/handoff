@@ -2,9 +2,7 @@
 
 ## Installation
 
-If you use Nix, installing is really easy. If you don't use Nix, why aren't you using Nix? It's like [XKCD 353](https://xkcd.com/353/) for package managers. Especially now that you mostly don't have to write any Nix by hand anymore, I don't know why you would use any other package manager. But anyway, if you don't use Nix you'll have to install from source.
-
-(TODO: Make a binary release on the Github?)
+If you use Nix, installing is really easy. If you don't use Nix, why aren't you using Nix? It's like [XKCD 353](https://xkcd.com/353/) for package managers. Especially now that you mostly don't have to write any Nix by hand anymore, I don't know why you would use any other package manager. But anyway, if you don't use Nix, there is a binary release for x86_64 Linux, and otherwise you'll have to install from source.
 
 ### With Nix
 
@@ -52,7 +50,17 @@ The `-g` means to install to a global user directory instead of installing local
 
 If you don't use Node, just manually copy the `handoff-start`, `handoff-update`, and `handoff-create` directories to `~/.claude/skills` or `~/.agents/skills` or wherever (see <https://code.claude.com/docs/en/claude-directory> or <https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills>).
 
-Next, install Racket 9.3 or later if you don't have it, and install `handoff` as a Racket package:
+Next, for the `handoff` command on x86_64 Linux, download the tarball from the [latest release](https://github.com/broughjt/handoff/releases/latest), unpack it somewhere permanent, and link the command onto your `PATH`:
+
+```sh
+mkdir -p ~/.local/opt ~/.local/bin
+tar -xzf handoff-v*-x86_64-linux.tar.gz -C ~/.local/opt
+ln -s ~/.local/opt/handoff-v*-x86_64-linux/bin/handoff ~/.local/bin/handoff
+```
+
+The tarball also holds the skills, in `share/skills/handoff`. `handoff` needs `git` and `bash` on your `PATH`.
+
+On other platforms, install Racket 9.3 or later if you don't have it, and install `handoff` as a Racket package:
 
 ```sh
 raco pkg install --auto git+https://github.com/broughjt/handoff
