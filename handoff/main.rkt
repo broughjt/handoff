@@ -196,12 +196,26 @@
      (define check-results (run-checks project-repository (arc-checks arc)))
      (define project-status
        (read-project-status project-repository (and baseline (cdr baseline))))
-     (print-start (build-start-report handoff-repository
-                                      arc
-                                      baseline
-                                      check-results
-                                      project-status
-                                      (read-dirty handoff-repository)))
+     (define report
+       (with-output-to-bytes
+         (thunk
+           (print-start (build-start-report handoff-repository
+                                            arc
+                                            baseline
+                                            check-results
+                                            project-status
+                                            (read-dirty handoff-repository))))))
+     (cond
+       [(> (bytes-length report) (* 1000 report-print-limit))
+        (define path (make-temporary-file "handoff-start-~a.txt"))
+        (call-with-output-file path
+          (λ ([out : Output-Port]) (write-bytes report out))
+          #:exists 'truncate)
+        (printf "the report was ~a KB, over the ~a KB limit, and was written to ~a\n"
+                (format-kilobytes (bytes-length report))
+                report-print-limit
+                path)]
+       [else (write-bytes report)])
      'success]
     [(? list? errors) (refuse-arc-errors arc-name errors)]))
 
@@ -1424,6 +1438,7 @@
 ;;; The start report
 
 (define report-budget 24) ; in KB of 1000 bytes
+(define report-print-limit 30) ; in KB of 1000 bytes
 (define commit-limit 20)
 
 (struct project-status ([path : Path]
