@@ -8,9 +8,7 @@ If you use Nix, installing is really easy. If you don't use Nix, why aren't you 
 
 ### With Nix
 
-The flake provides a home-manager module (this requires home-manager 26.05 or later). Add the flake as an input:
-
-TODO: Say why we need 26.05 or later. Should we just say we need 26.11?
+The flake provides a home-manager module (this requires both home-manager 26.11 or later and nixpkgs 26.11 or later). Add the flake as an input:
 
 ```nix
 inputs.handoff.url = "github:broughjt/handoff";
