@@ -60,6 +60,7 @@ in
 
     programs.codex.skills = lib.mkIf cfg.enableCodexIntegration cfg.skills;
 
+    # TODO: Use programs.pi-coding-agent.skills once nix-community/home-manager#9838 is merged
     home.file = lib.mkIf cfg.enablePiIntegration (
       lib.mapAttrs' (
         name: source:

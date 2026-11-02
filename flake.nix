@@ -26,7 +26,6 @@
           racket-dependencies = racketDependencies;
         };
 
-        # The build runs the test suite.
         checks.default = handoff;
 
         devShells.default = pkgs.mkShell {
@@ -47,8 +46,5 @@
       };
 
       homeModules.default = import ./nix/home-manager.nix { inherit self; };
-
-      # Superseded by the package's passthru.skills and the home-manager module.
-      skills = ./skills;
     };
 }

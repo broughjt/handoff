@@ -1,6 +1,6 @@
 # This is a manual closure of the toml-lib and basedir dependencies. We add
-# `tzdata` so the `gregor` library can use it. toml-lib comes from a fork that
-# fixes its floats until toml-racket/toml-racket#24 is merged.
+# `tzdata` so the `gregor` library can use it. For now, toml-lib is a fork that
+# fixes a bug in float parsing until toml-racket/toml-racket#24 is merged.
 {
   lib,
   stdenvNoCC,
@@ -26,7 +26,6 @@ let
     github "stchang" "parsack" "57b21873e8e3eb7ffbdfa253251c3c27a66723b1"
       "sha256-nWpLRsynxy2G3vAxflGkl6LfMiVIRpujAQ/LTGuBDfk=";
 
-  # Package name and the directory holding its info.rkt.
   packages = {
     basedir = github "willghatch" "racket-basedir" "487dfc49ff3268b76dea9aa2011ddfe585da2672"
       "sha256-Ia+wFnUSKMfhot0f8I8TFCPtGEdwy9gnnrnBEgNvSt0=";
