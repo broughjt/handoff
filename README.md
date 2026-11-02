@@ -79,3 +79,7 @@ ln -s ~/.local/opt/handoff-v*-$(uname -m)-linux/bin/handoff ~/.local/bin/handoff
 ```
 
 The tarball also contains the skills in `share/skills/handoff`. The `handoff` command requires `git` and `bash` to be on your `PATH`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

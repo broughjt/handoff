@@ -2,6 +2,7 @@
 
 (define collection "handoff")
 (define version "0.4")
+(define license 'MIT)
 
 (define deps
   '("base"

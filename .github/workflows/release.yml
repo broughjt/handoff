@@ -39,6 +39,7 @@ jobs:
           raco distribute "$NAME" build/handoff
           mkdir -p "$NAME/share/skills/handoff"
           cp -r skills/. "$NAME/share/skills/handoff"
+          cp LICENSE "$NAME"
       - name: Test
         run: |
           raco test handoff/tests

@@ -103,5 +103,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
 
   passthru.skills = "${finalAttrs.finalPackage}/share/skills/handoff";
 
-  meta.mainProgram = "handoff";
+  meta = {
+    license = lib.licenses.mit;
+    mainProgram = "handoff";
+  };
 })
