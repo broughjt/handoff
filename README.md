@@ -1,5 +1,7 @@
 # handoff
 
+TODO: Under construction.
+
 ## Installation
 
 If you use Nix, installing is really easy. If you don't use Nix, why aren't you using Nix? It's like [XKCD 353](https://xkcd.com/353/) for package managers. Especially now that you mostly don't have to write any Nix by hand anymore, I don't know why you would use any other package manager. But anyway, if you don't use Nix, you can either install using the Racket package manager `raco` or from the binary release on GitHub.
