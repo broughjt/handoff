@@ -86,7 +86,7 @@
                                "outcome: false\n"
                                "change: new since log/7\n"
                                "exit: 1\n"
-                               "duration: 0.0s\n"
+                               "duration: 0s\n"
                                "output:\n"
                                "  no\n"
                                "\n"

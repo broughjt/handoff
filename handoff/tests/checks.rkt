@@ -125,7 +125,7 @@
                 (string-append "id: echo\n"
                                "claim: it echoes\n"
                                "outcome: true\n"
-                               "duration: 1.2s\n"
+                               "duration: 1.24s\n"
                                "\n"
                                "summary: 1 true\n")))
 
@@ -143,7 +143,7 @@
                                "claim: it echoes\n"
                                "outcome: false\n"
                                "exit: 1\n"
-                               "duration: 0.0s\n"
+                               "duration: 0s\n"
                                "output (last 20 of 22 lines):\n"
                                (apply string-append
                                       (for/list : (Listof String)
