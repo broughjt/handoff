@@ -60,4 +60,7 @@ jobs:
           merge-multiple: true
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" handoff-*.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes
+        run: |
+          prerelease=()
+          [[ $GITHUB_REF_NAME == *-* ]] && prerelease=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" handoff-*.tar.gz --repo "$GITHUB_REPOSITORY" --generate-notes "${prerelease[@]}"
