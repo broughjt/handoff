@@ -128,12 +128,10 @@
        ;; sense.
        [(invocation _ (workflow-list-subcommand)) (handle-workflow-list)]
        [(invocation _ (guide-subcommand)) (handle-guide)]
+       [(invocation option (new-subcommand arc workflow))
+        (handle-new option arc workflow)]
        [(invocation option subcommand)
-        (when (and option (not (git-repository? option)))
-          (raise-handoff-error "~a is not a git repository" option))
-        (define handoff-repository
-          (simple-form-path
-           (or option (find-handoff-repository (current-directory)))))
+        (define handoff-repository (open-handoff-repository option))
         (match subcommand
           [(list-subcommand closed?)
            (handle-list handoff-repository closed?)]
@@ -156,8 +154,6 @@
           [(close-subcommand arc)
            (handle-close handoff-repository
                          (select-arc handoff-repository arc))]
-          [(new-subcommand arc workflow)
-           (handle-new handoff-repository arc workflow)]
           [(workflow-install-subcommand name)
            (handle-workflow-install handoff-repository name)]
           [(workflow-fork-subcommand arc source name)
@@ -370,15 +366,20 @@
   (print-dirty (read-dirty handoff-repository))
   'success)
 
-(: handle-new (-> Path String (U String #f) Status))
-(define (handle-new handoff-repository arc-name workflow-name)
+(: handle-new (-> (U Path #f) String (U String #f) Status))
+(define (handle-new option arc-name workflow-name)
   (unless (arc-name? arc-name)
     (raise-handoff-error "specify a top-level arc directory name"))
+  (define workflow (and workflow-name (find-reusable-workflow workflow-name)))
+  (define handoff-repository
+    (if option
+        (open-handoff-repository option)
+        (or (find-handoff-repository (current-directory))
+            (create-handoff-repository (current-directory)))))
   (define directory (build-path handoff-repository arc-name))
   (when (file-or-directory-type directory)
     (raise-handoff-error "~a already exists in ~a" arc-name handoff-repository))
   (define project-repository (find-project-repository handoff-repository))
-  (define workflow (and workflow-name (find-reusable-workflow workflow-name)))
   (define workflow-path
     (if workflow
         (scope-path 'handoff
@@ -508,7 +509,18 @@
   (define dot-git (build-path path ".git"))
   (or (directory-exists? dot-git) (file-exists? dot-git)))
 
-(: find-handoff-repository (-> Path-String Path))
+(: open-handoff-repository (-> (U Path #f) Path))
+(define (open-handoff-repository option)
+  (when (and option (not (git-repository? option)))
+    (raise-handoff-error "~a is not a git repository" option))
+  (simple-form-path
+   (or option
+       (find-handoff-repository (current-directory))
+       (raise-handoff-error "no ~a/ at or above ~a"
+                            handoff-repository-path
+                            (current-directory)))))
+
+(: find-handoff-repository (-> Path-String (U Path #f)))
 (define (find-handoff-repository start)
   (let loop ([directory (simple-form-path start)])
     (define candidate (build-path directory handoff-repository-path))
@@ -516,9 +528,28 @@
     (cond
       [(git-repository? candidate) candidate]
       [(path? parent) (loop parent)]
-      [else (raise-handoff-error "no ~a/ at or above ~a"
-                                 handoff-repository-path
-                                 start)])))
+      [else #f])))
+
+(: create-handoff-repository (-> Path Path))
+(define (create-handoff-repository start)
+  (define project-repository
+    (or (git* start "rev-parse" "--show-toplevel")
+        (raise-handoff-error
+         "no ~a/ at or above ~a, and no project repository to create it in"
+         handoff-repository-path
+         start)))
+  (define handoff-repository
+    (build-path project-repository handoff-repository-path))
+  (unless (git* project-repository
+                "init" "--quiet" (path->string handoff-repository))
+    (raise-handoff-error "git init ~a failed" handoff-repository))
+  (printf "initialized: ~a\n" handoff-repository)
+  (unless (git* project-repository
+                "check-ignore" "--quiet" (path->string handoff-repository-path))
+    (printf
+     "note: the project does not ignore ~a/; add it to .gitignore or .git/info/exclude\n"
+     handoff-repository-path))
+  handoff-repository)
 
 (: find-project-repository (-> Path Path))
 (define (find-project-repository handoff-repository)
